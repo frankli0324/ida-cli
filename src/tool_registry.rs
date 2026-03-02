@@ -139,7 +139,113 @@ pub struct ToolInfo {
     pub default: bool,
     /// Keywords for semantic search
     pub keywords: &'static [&'static str],
+    /// Alternative names for this tool
+    pub aliases: &'static [&'static str],
 }
+
+// =============================================================================
+// TOOL RENAME MAPPING — old_name → new_primary_name (single source of truth)
+// Task 3 applies these renames. Task 4 updates dispatch. Task 5 updates server.
+// =============================================================================
+//
+// === Core (mostly unchanged) ===
+// analysis_status     → get_analysis_status     (alias: analysis_status)
+// idb_meta            → get_database_info       (alias: idb_meta)
+// task_status         → get_task_status          (alias: task_status)
+// open_idb, open_dsc, open_sbpf, close_idb, dsc_add_dylib, load_debug_info,
+// tool_catalog, tool_help — UNCHANGED
+//
+// === Functions ===
+// list_functions      → UNCHANGED
+// list_funcs          → REMOVED as separate entry (alias under list_functions)
+// resolve_function    → get_function_by_name     (alias: resolve_function)
+// function_at         → get_function_at_address   (alias: function_at)
+// lookup_funcs        → batch_lookup_functions    (alias: lookup_funcs)
+// analyze_funcs       → run_auto_analysis         (alias: analyze_funcs)
+//
+// === Disassembly ===
+// disasm              → disassemble              (alias: disasm)
+// disasm_by_name      → disassemble_function      (alias: disasm_by_name)
+// disasm_function_at  → disassemble_function_at   (alias: disasm_function_at)
+//
+// === Decompile ===
+// decompile           → decompile_function        (alias: decompile)
+// pseudocode_at       → get_pseudocode_at         (alias: pseudocode_at)
+// decompile_structured → UNCHANGED
+// batch_decompile     → UNCHANGED
+// diff_functions      → diff_pseudocode           (alias: diff_functions)
+// search_pseudocode   → UNCHANGED
+//
+// === Xrefs ===
+// xrefs_to            → get_xrefs_to             (alias: xrefs_to)
+// xrefs_from          → get_xrefs_from           (alias: xrefs_from)
+// xrefs_to_string     → get_xrefs_to_string      (alias: xrefs_to_string)
+// xref_matrix         → build_xref_matrix         (alias: xref_matrix)
+// xrefs_to_field      → get_xrefs_to_struct_field (alias: xrefs_to_field)
+//
+// === Control Flow ===
+// basic_blocks        → get_basic_blocks          (alias: basic_blocks)
+// callers             → get_callers               (alias: callers)
+// callees             → get_callees               (alias: callees)
+// callgraph           → build_callgraph           (alias: callgraph)
+// find_paths          → find_control_flow_paths   (alias: find_paths)
+//
+// === Memory ===
+// get_bytes           → read_bytes                (alias: get_bytes)
+// get_string          → read_string               (alias: get_string)
+// get_u8              → read_byte                 (alias: get_u8)
+// get_u16             → read_word                 (alias: get_u16)
+// get_u32             → read_dword                (alias: get_u32)
+// get_u64             → read_qword               (alias: get_u64)
+// get_global_value    → read_global_variable      (alias: get_global_value)
+// int_convert         → convert_number            (alias: int_convert)
+// table_scan          → scan_memory_table         (alias: table_scan)
+//
+// === Search ===
+// find_bytes          → search_bytes              (alias: find_bytes)
+// search              → search_text               (alias: search)
+// strings + find_string + analyze_strings → list_strings
+//   (aliases: strings, find_string, analyze_strings — 3 merged into 1)
+// find_insns          → search_instructions       (alias: find_insns)
+// find_insn_operands  → search_instruction_operands (alias: find_insn_operands)
+//
+// === Metadata ===
+// segments            → list_segments             (alias: segments)
+// addr_info           → get_address_info          (alias: addr_info)
+// imports             → list_imports              (alias: imports)
+// exports             → list_exports              (alias: exports)
+// export_funcs        → export_functions          (alias: export_funcs)
+// entrypoints         → list_entry_points         (alias: entrypoints)
+// list_globals        → UNCHANGED
+//
+// === Types / Structs ===
+// local_types         → list_local_types          (alias: local_types)
+// declare_type        → declare_c_type            (alias: declare_type)
+// apply_types         → apply_type                (alias: apply_types)
+// infer_types         → infer_type                (alias: infer_types)
+// stack_frame         → get_stack_frame           (alias: stack_frame)
+// declare_stack       → create_stack_variable      (alias: declare_stack)
+// delete_stack        → delete_stack_variable      (alias: delete_stack)
+// structs             → list_structs              (alias: structs)
+// struct_info         → get_struct_info           (alias: struct_info)
+// read_struct         → read_struct_at_address     (alias: read_struct)
+// search_structs      → UNCHANGED
+//
+// === Editing ===
+// rename              → rename_symbol              (alias: rename)
+// rename_lvar         → rename_local_variable      (alias: rename_lvar)
+// set_lvar_type       → set_local_variable_type    (alias: set_lvar_type)
+// set_comments        → set_comment                (alias: set_comments)
+// set_decompiler_comment → UNCHANGED
+// patch               → patch_bytes                (alias: patch)
+// patch_asm           → patch_assembly             (alias: patch_asm)
+//
+// === Scripting ===
+// run_script          → UNCHANGED
+//
+// Summary: 49 renames, 20 unchanged, 3 merged into list_strings
+// Net count: 69 - 1 (list_funcs removed) - 2 (strings merged) = 66 + 7 new = 73 total
+// =============================================================================
 
 /// Static registry of all tools
 pub static TOOL_REGISTRY: &[ToolInfo] = &[
@@ -162,6 +268,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"path": "/path/to/binary", "load_debug_info": true}"#,
         default: true,
         keywords: &["open", "load", "database", "binary", "idb", "i64", "macho", "elf", "pe"],
+        aliases: &[],
     },
     ToolInfo {
         name: "open_dsc",
@@ -175,6 +282,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"path": "/path/to/dyld_shared_cache_arm64e", "arch": "arm64e", "module": "/usr/lib/libobjc.A.dylib", "frameworks": ["/System/Library/Frameworks/Foundation.framework/Foundation"]}"#,
         default: false,
         keywords: &["open", "dsc", "dyld", "shared", "cache", "dylib", "module", "apple", "macos", "ios"],
+        aliases: &[],
     },
     ToolInfo {
         name: "open_sbpf",
@@ -190,6 +298,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"path": "~/programs/675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8.so"}"#,
         default: false,
         keywords: &["open", "solana", "sbpf", "bpf", "program", "so", "sbpf2host", "aot", "compile"],
+        aliases: &[],
     },
     ToolInfo {
         name: "dsc_add_dylib",
@@ -203,6 +312,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"module": "/System/Library/Frameworks/Foundation.framework/Foundation", "timeout_secs": 300}"#,
         default: false,
         keywords: &["dsc", "dyld", "dylib", "module", "load", "add", "framework", "cache"],
+        aliases: &[],
     },
     ToolInfo {
         name: "load_debug_info",
@@ -214,6 +324,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"path": "/path/to/binary.dSYM/Contents/Resources/DWARF/binary"}"#,
         default: false,
         keywords: &["debug", "dwarf", "dsym", "symbols", "load"],
+        aliases: &[],
     },
     ToolInfo {
         name: "analysis_status",
@@ -224,6 +335,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: true,
         keywords: &["analysis", "autoanalysis", "status", "xrefs", "decompile"],
+        aliases: &[],
     },
     ToolInfo {
         name: "close_idb",
@@ -236,6 +348,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"close_token": "token-from-open-idb"}"#,
         default: true,
         keywords: &["close", "unload", "database"],
+        aliases: &[],
     },
     ToolInfo {
         name: "tool_catalog",
@@ -247,6 +360,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "find all callers of a function"}"#,
         default: true,
         keywords: &["discover", "find", "search", "tools", "help", "catalog"],
+        aliases: &[],
     },
     ToolInfo {
         name: "tool_help",
@@ -258,6 +372,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "list_functions"}"#,
         default: true,
         keywords: &["help", "docs", "documentation", "schema", "usage"],
+        aliases: &[],
     },
     ToolInfo {
         name: "task_status",
@@ -270,6 +385,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"task_id": "dsc-abc123"}"#,
         default: true,
         keywords: &["task", "status", "poll", "background", "dsc", "progress"],
+        aliases: &[],
     },
     ToolInfo {
         name: "idb_meta",
@@ -281,6 +397,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: true,
         keywords: &["info", "metadata", "summary", "database", "binary"],
+        aliases: &[],
     },
 
     // === FUNCTIONS ===
@@ -294,6 +411,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100, "filter": "init"}"#,
         default: false,
         keywords: &["functions", "list", "enumerate", "find", "filter", "subroutines"],
+        aliases: &[],
     },
     ToolInfo {
         name: "list_funcs",
@@ -304,6 +422,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100, "filter": "init"}"#,
         default: false,
         keywords: &["functions", "list", "alias"],
+        aliases: &[],
     },
     ToolInfo {
         name: "resolve_function",
@@ -314,6 +433,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "main"}"#,
         default: false,
         keywords: &["resolve", "find", "lookup", "function", "name", "address"],
+        aliases: &[],
     },
     ToolInfo {
         name: "function_at",
@@ -324,6 +444,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["function", "address", "pc", "lr", "containing"],
+        aliases: &[],
     },
     ToolInfo {
         name: "lookup_funcs",
@@ -334,6 +455,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"names": ["main", "printf", "malloc"]}"#,
         default: false,
         keywords: &["lookup", "batch", "multiple", "functions", "names"],
+        aliases: &[],
     },
     ToolInfo {
         name: "analyze_funcs",
@@ -344,6 +466,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"timeout_secs": 120}"#,
         default: false,
         keywords: &["analyze", "functions", "analysis", "auto"],
+        aliases: &[],
     },
 
     // === DISASSEMBLY ===
@@ -357,6 +480,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000", "count": 20}"#,
         default: false,
         keywords: &["disassemble", "disasm", "assembly", "instructions", "code"],
+        aliases: &[],
     },
     ToolInfo {
         name: "disasm_by_name",
@@ -367,6 +491,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "main", "count": 50}"#,
         default: false,
         keywords: &["disassemble", "function", "name", "assembly"],
+        aliases: &[],
     },
     ToolInfo {
         name: "disasm_function_at",
@@ -377,6 +502,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000", "count": 200}"#,
         default: false,
         keywords: &["disassemble", "function", "address", "pc", "lr"],
+        aliases: &[],
     },
 
     // === DECOMPILE ===
@@ -389,6 +515,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["decompile", "pseudocode", "c", "source", "hex-rays"],
+        aliases: &[],
     },
     ToolInfo {
         name: "pseudocode_at",
@@ -400,6 +527,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000", "end_address": "0x1020"}"#,
         default: false,
         keywords: &["pseudocode", "decompile", "block", "range", "statement"],
+        aliases: &[],
     },
     ToolInfo {
         name: "decompile_structured",
@@ -420,6 +548,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
             "hex-rays",
             "tree",
         ],
+        aliases: &[],
     },
     ToolInfo {
         name: "batch_decompile",
@@ -431,6 +560,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"addresses": ["0x1000", "0x2000", "0x3000"]}"#,
         default: false,
         keywords: &["decompile", "batch", "multiple", "bulk", "pseudocode"],
+        aliases: &[],
     },
     ToolInfo {
         name: "search_pseudocode",
@@ -443,6 +573,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"pattern": "malloc", "limit": 10}"#,
         default: false,
         keywords: &["search", "pseudocode", "decompile", "pattern", "find", "grep"],
+        aliases: &[],
     },
     ToolInfo {
         name: "table_scan",
@@ -455,6 +586,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"base_address": "0x1000", "stride": 8, "count": 16}"#,
         default: false,
         keywords: &["table", "scan", "memory", "vtable", "pointer", "stride", "bytes"],
+        aliases: &[],
     },
     ToolInfo {
         name: "diff_functions",
@@ -467,6 +599,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"addr1": "0x1000", "addr2": "0x2000"}"#,
         default: false,
         keywords: &["diff", "compare", "functions", "decompile", "pseudocode", "similarity"],
+        aliases: &[],
     },
 
     // === XREFS ===
@@ -480,6 +613,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["xrefs", "references", "to", "callers", "usage"],
+        aliases: &[],
     },
     ToolInfo {
         name: "xrefs_from",
@@ -491,6 +625,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["xrefs", "references", "from", "callees", "targets"],
+        aliases: &[],
     },
     ToolInfo {
         name: "xrefs_to_string",
@@ -501,6 +636,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "value=%d", "limit": 10}"#,
         default: false,
         keywords: &["xrefs", "strings", "cstring", "references", "usage"],
+        aliases: &[],
     },
     ToolInfo {
         name: "xref_matrix",
@@ -511,6 +647,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"addresses": ["0x1000", "0x2000", "0x3000"]}"#,
         default: false,
         keywords: &["xrefs", "matrix", "relationships", "graph"],
+        aliases: &[],
     },
 
     // === CONTROL FLOW ===
@@ -523,6 +660,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["basic", "blocks", "cfg", "control", "flow", "graph"],
+        aliases: &[],
     },
     ToolInfo {
         name: "callers",
@@ -533,6 +671,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["callers", "called", "by", "references", "xrefs"],
+        aliases: &[],
     },
     ToolInfo {
         name: "callees",
@@ -543,6 +682,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["callees", "calls", "targets", "functions"],
+        aliases: &[],
     },
     ToolInfo {
         name: "callgraph",
@@ -553,6 +693,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"roots": "0x1000", "max_depth": 2, "max_nodes": 256}"#,
         default: false,
         keywords: &["callgraph", "call", "graph", "depth", "tree"],
+        aliases: &[],
     },
     ToolInfo {
         name: "find_paths",
@@ -563,6 +704,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"start": "0x1000", "end": "0x2000", "max_depth": 5}"#,
         default: false,
         keywords: &["paths", "route", "flow", "between", "reach"],
+        aliases: &[],
     },
 
     // === MEMORY ===
@@ -576,6 +718,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": 0, "size": 32}"#,
         default: false,
         keywords: &["bytes", "read", "memory", "data", "raw", "hex"],
+        aliases: &[],
     },
     ToolInfo {
         name: "get_string",
@@ -586,6 +729,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["string", "read", "text", "ascii", "data"],
+        aliases: &[],
     },
     ToolInfo {
         name: "get_u8",
@@ -595,6 +739,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["byte", "u8", "read", "value"],
+        aliases: &[],
     },
     ToolInfo {
         name: "get_u16",
@@ -604,6 +749,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["word", "u16", "read", "value"],
+        aliases: &[],
     },
     ToolInfo {
         name: "get_u32",
@@ -613,6 +759,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["dword", "u32", "read", "value"],
+        aliases: &[],
     },
     ToolInfo {
         name: "get_u64",
@@ -622,6 +769,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["qword", "u64", "read", "value"],
+        aliases: &[],
     },
     ToolInfo {
         name: "get_global_value",
@@ -631,6 +779,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "g_flag"}"#,
         default: false,
         keywords: &["global", "value", "read", "symbol", "data"],
+        aliases: &[],
     },
     ToolInfo {
         name: "int_convert",
@@ -640,6 +789,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"inputs": ["0x41424344", 1234]}"#,
         default: false,
         keywords: &["int", "convert", "hex", "decimal", "ascii"],
+        aliases: &[],
     },
 
     // === SEARCH ===
@@ -652,6 +802,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"pattern": "48 89 5C 24", "limit": 100}"#,
         default: false,
         keywords: &["find", "search", "bytes", "pattern", "hex"],
+        aliases: &[],
     },
     ToolInfo {
         name: "search",
@@ -662,6 +813,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"targets": "password", "kind": "text"}"#,
         default: false,
         keywords: &["search", "find", "text", "string", "immediate"],
+        aliases: &[],
     },
     ToolInfo {
         name: "strings",
@@ -672,6 +824,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100, "filter": "http"}"#,
         default: false,
         keywords: &["strings", "list", "text", "data"],
+        aliases: &[],
     },
     ToolInfo {
         name: "find_string",
@@ -682,6 +835,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "value=%d", "limit": 20}"#,
         default: false,
         keywords: &["strings", "find", "search", "text"],
+        aliases: &[],
     },
     ToolInfo {
         name: "analyze_strings",
@@ -692,6 +846,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "http", "offset": 0, "limit": 100}"#,
         default: false,
         keywords: &["strings", "analyze", "filter", "pattern"],
+        aliases: &[],
     },
     ToolInfo {
         name: "find_insns",
@@ -703,6 +858,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"patterns": ["mov", "bl"], "limit": 5}"#,
         default: false,
         keywords: &["find", "instructions", "sequence", "pattern"],
+        aliases: &[],
     },
     ToolInfo {
         name: "find_insn_operands",
@@ -713,6 +869,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"patterns": ["sp", "0x10"], "limit": 5}"#,
         default: false,
         keywords: &["find", "operands", "instructions", "pattern"],
+        aliases: &[],
     },
 
     // === METADATA ===
@@ -725,6 +882,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: false,
         keywords: &["segments", "sections", "memory", "layout"],
+        aliases: &[],
     },
     ToolInfo {
         name: "addr_info",
@@ -735,6 +893,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["address", "segment", "function", "symbol", "context"],
+        aliases: &[],
     },
     ToolInfo {
         name: "imports",
@@ -744,6 +903,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100}"#,
         default: false,
         keywords: &["imports", "external", "libraries", "api"],
+        aliases: &[],
     },
     ToolInfo {
         name: "exports",
@@ -753,6 +913,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100}"#,
         default: false,
         keywords: &["exports", "symbols", "public", "api"],
+        aliases: &[],
     },
     ToolInfo {
         name: "export_funcs",
@@ -762,6 +923,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"addrs": ["0x1000", "0x2000"], "format": "json"}"#,
         default: false,
         keywords: &["export", "functions", "json", "dump"],
+        aliases: &[],
     },
     ToolInfo {
         name: "entrypoints",
@@ -771,6 +933,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: false,
         keywords: &["entry", "start", "main", "entrypoint"],
+        aliases: &[],
     },
     ToolInfo {
         name: "list_globals",
@@ -780,6 +943,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100}"#,
         default: false,
         keywords: &["globals", "variables", "data", "symbols"],
+        aliases: &[],
     },
 
     // === TYPES / STRUCTS ===
@@ -791,6 +955,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "struct", "limit": 50}"#,
         default: false,
         keywords: &["types", "local", "typedef"],
+        aliases: &[],
     },
     ToolInfo {
         name: "xrefs_to_field",
@@ -800,6 +965,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "Outer", "member_name": "inner", "limit": 25}"#,
         default: false,
         keywords: &["xrefs", "struct", "field", "member"],
+        aliases: &[],
     },
     ToolInfo {
         name: "declare_type",
@@ -809,6 +975,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"decl": "typedef int mcp_int_t;", "replace": true}"#,
         default: false,
         keywords: &["type", "declare", "typedef"],
+        aliases: &[],
     },
     ToolInfo {
         name: "apply_types",
@@ -819,6 +986,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "stack_offset": -16, "decl": "int mcp_local;"}"#,
         default: false,
         keywords: &["types", "apply", "annotations"],
+        aliases: &[],
     },
     ToolInfo {
         name: "infer_types",
@@ -828,6 +996,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function"}"#,
         default: false,
         keywords: &["types", "infer", "analysis"],
+        aliases: &[],
     },
     ToolInfo {
         name: "stack_frame",
@@ -838,6 +1007,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["stack", "frame", "locals"],
+        aliases: &[],
     },
     ToolInfo {
         name: "declare_stack",
@@ -848,6 +1018,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": -16, "var_name": "mcp_local", "decl": "int mcp_local;"}"#,
         default: false,
         keywords: &["stack", "declare", "variable"],
+        aliases: &[],
     },
     ToolInfo {
         name: "delete_stack",
@@ -857,6 +1028,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": -16}"#,
         default: false,
         keywords: &["stack", "delete", "variable"],
+        aliases: &[],
     },
     ToolInfo {
         name: "structs",
@@ -866,6 +1038,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"limit": 50, "filter": "objc"}"#,
         default: false,
         keywords: &["structs", "types", "list"],
+        aliases: &[],
     },
     ToolInfo {
         name: "struct_info",
@@ -875,6 +1048,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "MyStruct"}"#,
         default: false,
         keywords: &["struct", "info", "types"],
+        aliases: &[],
     },
     ToolInfo {
         name: "read_struct",
@@ -884,6 +1058,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000", "name": "MyStruct"}"#,
         default: false,
         keywords: &["struct", "read", "values"],
+        aliases: &[],
     },
     ToolInfo {
         name: "search_structs",
@@ -894,6 +1069,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "my_struct", "limit": 20}"#,
         default: false,
         keywords: &["struct", "search", "types"],
+        aliases: &[],
     },
 
     // === EDITING / PATCHING ===
@@ -907,6 +1083,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "comment": "note", "repeatable": false}"#,
         default: false,
         keywords: &["comments", "set", "annotate"],
+        aliases: &[],
     },
     ToolInfo {
         name: "patch_asm",
@@ -918,6 +1095,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": 0, "line": "nop"}"#,
         default: false,
         keywords: &["patch", "asm", "edit", "modify"],
+        aliases: &[],
     },
     ToolInfo {
         name: "patch",
@@ -928,6 +1106,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": 0, "bytes": "1f 20 03 d5"}"#,
         default: false,
         keywords: &["patch", "bytes", "edit", "modify"],
+        aliases: &[],
     },
     ToolInfo {
         name: "rename",
@@ -938,6 +1117,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"current_name": "interesting_function", "name": "interesting_function_renamed", "flags": 0}"#,
         default: false,
         keywords: &["rename", "symbol", "edit"],
+        aliases: &[],
     },
     ToolInfo {
         name: "rename_lvar",
@@ -948,6 +1128,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"func_address": "0x100000f00", "lvar_name": "v1", "new_name": "buffer_size"}"#,
         default: false,
         keywords: &["rename", "lvar", "local", "variable", "decompiler", "pseudocode"],
+        aliases: &[],
     },
     ToolInfo {
         name: "set_lvar_type",
@@ -959,6 +1140,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"func_address": "0x100000f00", "lvar_name": "v1", "type_str": "char *"}"#,
         default: false,
         keywords: &["type", "lvar", "local", "variable", "decompiler", "pseudocode", "retype"],
+        aliases: &[],
     },
     ToolInfo {
         name: "set_decompiler_comment",
@@ -970,6 +1152,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"func_address": "0x100000f00", "address": "0x100000f10", "comment": "check buffer size"}"#,
         default: false,
         keywords: &["comment", "decompiler", "pseudocode", "annotate", "hex-rays"],
+        aliases: &[],
     },
 
     // === SCRIPTING ===
@@ -987,6 +1170,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"code": "import idautils\nfor f in idautils.Functions():\n    print(hex(f))"}"#,
         default: false,
         keywords: &["script", "python", "execute", "eval", "idapython", "run", "code", "file"],
+        aliases: &[],
     },
 ];
 
@@ -1000,9 +1184,24 @@ pub fn all_tools() -> impl Iterator<Item = &'static ToolInfo> {
     TOOL_REGISTRY.iter()
 }
 
-/// Get tool by name
+/// Get tool by name or alias
+pub fn get_tool_by_alias(name: &str) -> Option<&'static ToolInfo> {
+    TOOL_REGISTRY
+        .iter()
+        .find(|t| t.name == name || t.aliases.contains(&name))
+}
+
+/// Get tool by name (uses alias lookup internally)
 pub fn get_tool(name: &str) -> Option<&'static ToolInfo> {
-    TOOL_REGISTRY.iter().find(|t| t.name == name)
+    get_tool_by_alias(name)
+}
+
+/// Resolve alias to primary tool name (returns original if not found)
+pub fn primary_name_for(name: &str) -> &str {
+    match get_tool_by_alias(name) {
+        Some(tool) => tool.name,
+        None => name,
+    }
 }
 
 /// Get tools by category
@@ -1046,6 +1245,19 @@ pub fn search_tools(query: &str, limit: usize) -> Vec<(&'static ToolInfo, Vec<&'
                     score += 3;
                     if !matched_keywords.contains(keyword) {
                         matched_keywords.push(keyword);
+                    }
+                }
+            }
+        }
+
+        // Check aliases
+        for alias in tool.aliases {
+            let alias_lower = alias.to_lowercase();
+            for word in &query_words {
+                if alias_lower.contains(word) {
+                    score += 8;
+                    if !matched_keywords.contains(alias) {
+                        matched_keywords.push(alias);
                     }
                 }
             }
