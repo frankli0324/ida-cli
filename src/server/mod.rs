@@ -815,6 +815,59 @@ impl IdaMcpServer {
             self.open_idb(Parameters(idb_req)).await?
         };
 
+        // Try to resolve the Solana program entrypoint for convenience.
+        // The entrypoint!() macro produces a function named "entrypoint"
+        // in the AOT-compiled dylib — this is the real program logic entry,
+        // NOT the sbpf2host runtime wrapper ("sbpf_entrypoint").
+        let entrypoint_json = {
+            let db_handle: Option<String> = result
+                .content
+                .first()
+                .and_then(|c| match &c.raw {
+                    rmcp::model::RawContent::Text(t) => serde_json::from_str::<serde_json::Value>(&t.text)
+                        .ok()
+                        .and_then(|v| v.get("db_handle")?.as_str().map(String::from)),
+                    _ => None,
+                });
+
+            if let Some(ref handle) = db_handle {
+                if let ServerMode::Router(ref router) = self.mode {
+                    match self
+                        .route_or_err(
+                            router,
+                            Some(handle),
+                            "resolve_function",
+                            json!({"name": "entrypoint"}),
+                        )
+                        .await
+                    {
+                        Ok(r) if !r.is_error.unwrap_or(false) => r
+                            .content
+                            .first()
+                            .and_then(|c| match &c.raw {
+                                rmcp::model::RawContent::Text(t) => {
+                                    serde_json::from_str::<serde_json::Value>(&t.text).ok()
+                                }
+                                _ => None,
+                            }),
+                        _ => None,
+                    }
+                } else {
+                    self.worker
+                        .resolve_function("entrypoint")
+                        .await
+                        .ok()
+                        .map(|info| json!({
+                            "name": info.name,
+                            "address": info.address,
+                            "size": info.size,
+                        }))
+                }
+            } else {
+                None
+            }
+        };
+
         // Annotate response with sBPF-specific fields.
         if let Some(text) = result.content.first_mut().and_then(|c| {
             if let rmcp::model::RawContent::Text(ref mut t) = c.raw {
@@ -828,6 +881,9 @@ impl IdaMcpServer {
                     map.insert("sbpf_source".to_string(), json!(req.path));
                     map.insert("dylib_path".to_string(), json!(dylib_str));
                     map.insert("compiled".to_string(), json!(compiled));
+                    if let Some(ep) = entrypoint_json {
+                        map.insert("entrypoint".to_string(), ep);
+                    }
                 }
                 text.text =
                     serde_json::to_string_pretty(&val).unwrap_or_else(|_| text.text.clone());
