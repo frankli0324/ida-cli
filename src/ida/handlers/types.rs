@@ -226,6 +226,29 @@ pub fn handle_infer_types(
     })
 }
 
+pub fn handle_set_function_prototype(
+    idb: &Option<IDB>,
+    addr: Option<u64>,
+    name: Option<&str>,
+    prototype: &str,
+) -> Result<serde_json::Value, ToolError> {
+    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
+    let addr = resolve_address(idb, addr, name, 0)?;
+    let ok = db.apply_decl_type(addr, prototype, true, false, false);
+    if ok {
+        Ok(serde_json::json!({
+            "address": format!("{:#x}", addr),
+            "prototype": prototype,
+            "applied": true,
+        }))
+    } else {
+        Err(ToolError::IdaError(format!(
+            "Failed to apply prototype '{}' at {:#x}",
+            prototype, addr
+        )))
+    }
+}
+
 pub fn handle_declare_stack(
     idb: &Option<IDB>,
     addr: Option<u64>,

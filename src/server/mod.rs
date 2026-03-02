@@ -1388,6 +1388,35 @@ impl IdaMcpServer {
         }
     }
 
+    #[tool(
+        description = "Get the type/prototype declaration of a function at a given address or name"
+    )]
+    async fn get_function_prototype(
+        &self,
+        Parameters(req): Parameters<GetFunctionPrototypeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        if let ServerMode::Router(ref router) = self.mode {
+            return self
+                .route_or_err(
+                    router,
+                    req.db_handle.as_deref(),
+                    "get_function_prototype",
+                    json!({"address": req.address, "name": req.name}),
+                )
+                .await;
+        }
+        let addr = req
+            .address
+            .as_ref()
+            .and_then(crate::rpc_dispatch::parse_address_value);
+        match self.worker.get_function_prototype(addr, req.name).await {
+            Ok(v) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&v).unwrap_or_else(|_| format!("{v:?}")),
+            )])),
+            Err(e) => Ok(e.to_tool_result()),
+        }
+    }
+
     #[tool(description = "Get address context (segment, function, nearest symbol)")]
     async fn get_address_info(
         &self,
@@ -3310,6 +3339,38 @@ impl IdaMcpServer {
         }
     }
 
+    #[tool(description = "Set a function-level comment (visible at function entry)")]
+    async fn set_function_comment(
+        &self,
+        Parameters(req): Parameters<SetFunctionCommentRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        if let ServerMode::Router(ref router) = self.mode {
+            return self
+                .route_or_err(
+                    router,
+                    req.db_handle.as_deref(),
+                    "set_function_comment",
+                    serde_json::to_value(&req).unwrap_or_default(),
+                )
+                .await;
+        }
+        let addr = req
+            .address
+            .as_ref()
+            .and_then(crate::rpc_dispatch::parse_address_value);
+        let repeatable = req.repeatable.unwrap_or(false);
+        match self
+            .worker
+            .set_function_comment(addr, req.name.clone(), req.comment.clone(), repeatable)
+            .await
+        {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)),
+            )])),
+            Err(e) => Ok(e.to_tool_result()),
+        }
+    }
+
     #[tool(description = "Patch instructions with assembly text")]
     async fn patch_assembly(
         &self,
@@ -3752,6 +3813,37 @@ impl IdaMcpServer {
         }
     }
 
+    #[tool(description = "Apply a C prototype declaration to a function")]
+    async fn set_function_prototype(
+        &self,
+        Parameters(req): Parameters<SetFunctionPrototypeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        if let ServerMode::Router(ref router) = self.mode {
+            return self
+                .route_or_err(
+                    router,
+                    req.db_handle.as_deref(),
+                    "set_function_prototype",
+                    serde_json::to_value(&req).unwrap_or_default(),
+                )
+                .await;
+        }
+        let addr = req
+            .address
+            .as_ref()
+            .and_then(crate::rpc_dispatch::parse_address_value);
+        match self
+            .worker
+            .set_function_prototype(addr, req.name.clone(), req.prototype.clone())
+            .await
+        {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)),
+            )])),
+            Err(e) => Ok(e.to_tool_result()),
+        }
+    }
+
     #[tool(description = "Infer/guess type at an address")]
     async fn infer_type(
         &self,
@@ -3838,6 +3930,42 @@ impl IdaMcpServer {
             .rename(addr, req.current_name.clone(), req.name.clone(), flags)
             .await
         {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)),
+            )])),
+            Err(e) => Ok(e.to_tool_result()),
+        }
+    }
+
+    #[tool(description = "Rename multiple symbols at once")]
+    async fn batch_rename(
+        &self,
+        Parameters(req): Parameters<BatchRenameRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        if let ServerMode::Router(ref router) = self.mode {
+            return self
+                .route_or_err(
+                    router,
+                    req.db_handle.as_deref(),
+                    "batch_rename",
+                    serde_json::to_value(&req).unwrap_or_default(),
+                )
+                .await;
+        }
+
+        let entries: Vec<(Option<u64>, Option<String>, String)> = req
+            .renames
+            .iter()
+            .map(|e| {
+                let addr = e
+                    .address
+                    .as_ref()
+                    .and_then(crate::rpc_dispatch::parse_address_value);
+                (addr, e.current_name.clone(), e.new_name.clone())
+            })
+            .collect();
+
+        match self.worker.batch_rename(entries).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(
                 serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)),
             )])),
@@ -4575,9 +4703,9 @@ fn tool_params_schema(name: &str) -> Option<Value> {
         "set_local_variable_type" => Some(schema::<SetLvarTypeRequest>()),
         "patch_bytes" => Some(schema::<PatchRequest>()),
         "patch_assembly" => Some(schema::<PatchAsmRequest>()),
-        "set_function_prototype" => Some(schema::<EmptyParams>()),
-        "set_function_comment" => Some(schema::<EmptyParams>()),
-        "batch_rename" => Some(schema::<EmptyParams>()),
+        "set_function_prototype" => Some(schema::<SetFunctionPrototypeRequest>()),
+        "set_function_comment" => Some(schema::<SetFunctionCommentRequest>()),
+        "batch_rename" => Some(schema::<BatchRenameRequest>()),
 
         // Types
         "list_structs" => Some(schema::<StructsRequest>()),
@@ -4592,7 +4720,7 @@ fn tool_params_schema(name: &str) -> Option<Value> {
         "infer_type" => Some(schema::<InferTypesRequest>()),
         "create_stack_variable" => Some(schema::<DeclareStackRequest>()),
         "delete_stack_variable" => Some(schema::<DeleteStackRequest>()),
-        "get_function_prototype" => Some(schema::<AddressRequest>()),
+        "get_function_prototype" => Some(schema::<GetFunctionPrototypeRequest>()),
         "rename_stack_variable" => Some(schema::<EmptyParams>()),
         "set_stack_variable_type" => Some(schema::<EmptyParams>()),
         "list_enums" => Some(schema::<EmptyParams>()),

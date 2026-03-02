@@ -164,6 +164,11 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.resolve_function(&req.name).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
+        "get_function_prototype" => {
+            let addr = parse_address_value(&p["address"]);
+            let name = p["name"].as_str().map(String::from);
+            worker.get_function_prototype(addr, name).await
+        }
         "get_function_at_address" => {
             let req: FunctionAtRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
@@ -362,6 +367,13 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.infer_types(addr, name, offset).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
+        "set_function_prototype" => {
+            let req: SetFunctionPrototypeRequest = parse_params(p)?;
+            let addr = req.address.as_ref().and_then(parse_address_value);
+            worker
+                .set_function_prototype(addr, req.name, req.prototype)
+                .await
+        }
 
         // ── Address info ─────────────────────────────────────────────────
         "get_address_info" => {
@@ -520,6 +532,14 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 .set_comments(addr, name, offset, comment, repeatable)
                 .await
         }
+        "set_function_comment" => {
+            let req: SetFunctionCommentRequest = parse_params(p)?;
+            let addr = req.address.as_ref().and_then(parse_address_value);
+            let repeatable = req.repeatable.unwrap_or(false);
+            worker
+                .set_function_comment(addr, req.name, req.comment, repeatable)
+                .await
+        }
         "rename_symbol" => {
             let req: RenameRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
@@ -527,6 +547,18 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let new_name = req.name;
             let flags = req.flags.unwrap_or(0);
             worker.rename(addr, current_name, new_name, flags).await
+        }
+        "batch_rename" => {
+            let req: BatchRenameRequest = parse_params(p)?;
+            let entries: Vec<(Option<u64>, Option<String>, String)> = req
+                .renames
+                .iter()
+                .map(|e| {
+                    let addr = e.address.as_ref().and_then(parse_address_value);
+                    (addr, e.current_name.clone(), e.new_name.clone())
+                })
+                .collect();
+            worker.batch_rename(entries).await
         }
 
         "rename_local_variable" => {
@@ -1232,6 +1264,18 @@ pub mod mock {
             Ok(default_function_info())
         }
 
+        async fn get_function_prototype(
+            &self,
+            addr: Option<u64>,
+            name: Option<String>,
+        ) -> Result<Value, ToolError> {
+            self.record(
+                "get_function_prototype",
+                json!({"addr": addr, "name": name}),
+            );
+            Ok(json!({}))
+        }
+
         async fn function_at(
             &self,
             addr: Option<u64>,
@@ -1440,6 +1484,19 @@ pub mod mock {
             Ok(default_guess_type())
         }
 
+        async fn set_function_prototype(
+            &self,
+            addr: Option<u64>,
+            name: Option<String>,
+            prototype: String,
+        ) -> Result<Value, ToolError> {
+            self.record(
+                "set_function_prototype",
+                json!({"addr": addr, "name": name, "prototype": prototype}),
+            );
+            Ok(json!({}))
+        }
+
         async fn addr_info(
             &self,
             addr: Option<u64>,
@@ -1620,6 +1677,25 @@ pub mod mock {
             Ok(json!({}))
         }
 
+        async fn set_function_comment(
+            &self,
+            addr: Option<u64>,
+            name: Option<String>,
+            comment: String,
+            repeatable: bool,
+        ) -> Result<Value, ToolError> {
+            self.record(
+                "set_function_comment",
+                json!({
+                    "addr": addr,
+                    "name": name,
+                    "comment": comment,
+                    "repeatable": repeatable,
+                }),
+            );
+            Ok(json!({}))
+        }
+
         async fn rename(
             &self,
             addr: Option<u64>,
@@ -1630,6 +1706,14 @@ pub mod mock {
             self.record("rename", json!({
                 "addr": addr, "current_name": current_name, "new_name": new_name, "flags": flags,
             }));
+            Ok(json!({}))
+        }
+
+        async fn batch_rename(
+            &self,
+            entries: Vec<(Option<u64>, Option<String>, String)>,
+        ) -> Result<Value, ToolError> {
+            self.record("batch_rename", json!({"entries": entries}));
             Ok(json!({}))
         }
 

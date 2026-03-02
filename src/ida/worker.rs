@@ -269,6 +269,20 @@ impl IdaWorker {
         rx.await?
     }
 
+    pub async fn get_function_prototype(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+    ) -> Result<Value, ToolError> {
+        let (tx, rx) = oneshot::channel();
+        self.try_send(IdaRequest::GetFunctionPrototype {
+            addr,
+            name,
+            resp: tx,
+        })?;
+        rx.await?
+    }
+
     /// Disassemble a function by name (exact or partial match).
     pub async fn disasm_by_name(&self, name: &str, count: usize) -> Result<String, ToolError> {
         let (tx, rx) = oneshot::channel();
@@ -404,6 +418,22 @@ impl IdaWorker {
             addr,
             name,
             offset,
+            resp: tx,
+        })?;
+        rx.await?
+    }
+
+    pub async fn set_function_prototype(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+        prototype: String,
+    ) -> Result<Value, ToolError> {
+        let (tx, rx) = oneshot::channel();
+        self.try_send(IdaRequest::SetFunctionPrototype {
+            addr,
+            name,
+            prototype,
             resp: tx,
         })?;
         rx.await?
@@ -665,6 +695,24 @@ impl IdaWorker {
         rx.await?
     }
 
+    pub async fn set_function_comment(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+        comment: String,
+        repeatable: bool,
+    ) -> Result<Value, ToolError> {
+        let (tx, rx) = oneshot::channel();
+        self.try_send(IdaRequest::SetFunctionComment {
+            addr,
+            name,
+            comment,
+            repeatable,
+            resp: tx,
+        })?;
+        rx.await?
+    }
+
     /// Rename a symbol at an address.
     pub async fn rename(
         &self,
@@ -681,6 +729,15 @@ impl IdaWorker {
             flags,
             resp: tx,
         })?;
+        rx.await?
+    }
+
+    pub async fn batch_rename(
+        &self,
+        entries: Vec<(Option<u64>, Option<String>, String)>,
+    ) -> Result<Value, ToolError> {
+        let (tx, rx) = oneshot::channel();
+        self.try_send(IdaRequest::BatchRename { entries, resp: tx })?;
         rx.await?
     }
 
@@ -1169,6 +1226,14 @@ impl WorkerDispatch for IdaWorker {
         self.resolve_function(name).await
     }
 
+    async fn get_function_prototype(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+    ) -> Result<Value, ToolError> {
+        self.get_function_prototype(addr, name).await
+    }
+
     async fn function_at(
         &self,
         addr: Option<u64>,
@@ -1333,6 +1398,15 @@ impl WorkerDispatch for IdaWorker {
         self.infer_types(addr, name, offset).await
     }
 
+    async fn set_function_prototype(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+        prototype: String,
+    ) -> Result<Value, ToolError> {
+        self.set_function_prototype(addr, name, prototype).await
+    }
+
     async fn addr_info(
         &self,
         addr: Option<u64>,
@@ -1462,6 +1536,17 @@ impl WorkerDispatch for IdaWorker {
             .await
     }
 
+    async fn set_function_comment(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+        comment: String,
+        repeatable: bool,
+    ) -> Result<Value, ToolError> {
+        self.set_function_comment(addr, name, comment, repeatable)
+            .await
+    }
+
     async fn rename(
         &self,
         addr: Option<u64>,
@@ -1470,6 +1555,13 @@ impl WorkerDispatch for IdaWorker {
         flags: i32,
     ) -> Result<Value, ToolError> {
         self.rename(addr, current_name, new_name, flags).await
+    }
+
+    async fn batch_rename(
+        &self,
+        entries: Vec<(Option<u64>, Option<String>, String)>,
+    ) -> Result<Value, ToolError> {
+        self.batch_rename(entries).await
     }
 
     async fn rename_lvar(

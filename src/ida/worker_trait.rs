@@ -53,6 +53,12 @@ pub trait WorkerDispatch {
 
     async fn resolve_function(&self, name: &str) -> Result<FunctionInfo, ToolError>;
 
+    async fn get_function_prototype(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+    ) -> Result<Value, ToolError>;
+
     async fn function_at(
         &self,
         addr: Option<u64>,
@@ -168,6 +174,13 @@ pub trait WorkerDispatch {
         offset: u64,
     ) -> Result<GuessTypeResult, ToolError>;
 
+    async fn set_function_prototype(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+        prototype: String,
+    ) -> Result<Value, ToolError>;
+
     // ── Address info ────────────────────────────────────────────────────
 
     async fn addr_info(
@@ -272,12 +285,25 @@ pub trait WorkerDispatch {
         repeatable: bool,
     ) -> Result<Value, ToolError>;
 
+    async fn set_function_comment(
+        &self,
+        addr: Option<u64>,
+        name: Option<String>,
+        comment: String,
+        repeatable: bool,
+    ) -> Result<Value, ToolError>;
+
     async fn rename(
         &self,
         addr: Option<u64>,
         current_name: Option<String>,
         new_name: String,
         flags: i32,
+    ) -> Result<Value, ToolError>;
+
+    async fn batch_rename(
+        &self,
+        entries: Vec<(Option<u64>, Option<String>, String)>,
     ) -> Result<Value, ToolError>;
 
     async fn rename_lvar(

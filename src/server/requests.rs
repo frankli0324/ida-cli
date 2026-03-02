@@ -101,6 +101,36 @@ pub struct ResolveFunctionRequest {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct GetFunctionPrototypeRequest {
+    #[schemars(
+        description = "Optional database handle for multi-IDB routing. If omitted, uses the active database."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_handle: Option<String>,
+    #[schemars(description = "Function address (string/number)")]
+    #[serde(alias = "ea", alias = "addr")]
+    pub address: Option<Value>,
+    #[schemars(description = "Function name (alternative to address)")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct SetFunctionPrototypeRequest {
+    #[schemars(
+        description = "Optional database handle for multi-IDB routing. If omitted, uses the active database."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_handle: Option<String>,
+    #[schemars(description = "Function address (string/number)")]
+    #[serde(alias = "ea", alias = "addr")]
+    pub address: Option<Value>,
+    #[schemars(description = "Function name (alternative to address)")]
+    pub name: Option<String>,
+    #[schemars(description = "C prototype string, e.g. 'int __fastcall foo(void *ctx, int len)'")]
+    pub prototype: String,
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AddrInfoRequest {
     #[schemars(
@@ -641,6 +671,24 @@ pub struct SetCommentsRequest {
     pub repeatable: Option<bool>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct SetFunctionCommentRequest {
+    #[schemars(
+        description = "Optional database handle for multi-IDB routing. If omitted, uses the active database."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_handle: Option<String>,
+    #[schemars(description = "Function address (string/number)")]
+    #[serde(alias = "ea", alias = "addr")]
+    pub address: Option<Value>,
+    #[schemars(description = "Function name (alternative to address)")]
+    pub name: Option<String>,
+    #[schemars(description = "Comment text")]
+    pub comment: String,
+    #[schemars(description = "If true, comment is visible in all views (default: false)")]
+    pub repeatable: Option<bool>,
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct RenameRequest {
     #[schemars(
@@ -659,6 +707,28 @@ pub struct RenameRequest {
     pub name: String,
     #[schemars(description = "IDA set_name flags (optional)")]
     pub flags: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct BatchRenameEntry {
+    #[schemars(description = "Address to rename (string/number)")]
+    #[serde(alias = "ea", alias = "addr")]
+    pub address: Option<Value>,
+    #[schemars(description = "Current name to resolve (alternative to address)")]
+    pub current_name: Option<String>,
+    #[schemars(description = "New name for the symbol")]
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct BatchRenameRequest {
+    #[schemars(
+        description = "Optional database handle for multi-IDB routing. If omitted, uses the active database."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_handle: Option<String>,
+    #[schemars(description = "List of rename operations")]
+    pub renames: Vec<BatchRenameEntry>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

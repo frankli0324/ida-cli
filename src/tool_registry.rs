@@ -425,6 +425,18 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         aliases: &["resolve_function"],
     },
     ToolInfo {
+        name: "get_function_prototype",
+        category: ToolCategory::Functions,
+        short_desc: "Get the type/prototype declaration of a function",
+        full_desc: "Retrieve the type declaration (prototype string) for a function. \
+                    Uses IDA's type system to extract the C prototype. \
+                    Returns: address, prototype string, type kind.",
+        example: r#"{"address": "0x100000f00"}"#,
+        default: false,
+        keywords: &["prototype", "type", "function", "declaration", "signature"],
+        aliases: &[],
+    },
+    ToolInfo {
         name: "get_function_at_address",
         category: ToolCategory::Functions,
         short_desc: "Find the function containing an address",
@@ -1053,6 +1065,18 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         aliases: &["set_comments"],
     },
     ToolInfo {
+        name: "set_function_comment",
+        category: ToolCategory::Editing,
+        short_desc: "Set a function-level comment (visible at function entry)",
+        full_desc: "Set a comment at the function entry point using IDA's function comment API. \
+                    This differs from set_comment (per-address) and set_decompiler_comment (per-decompiler-line). \
+                    Function comments are shown in function listings and navigation views.",
+        example: r#"{"name": "process_swap", "comment": "Handles swap instruction routing"}"#,
+        default: false,
+        keywords: &["comment", "function", "annotate", "note"],
+        aliases: &[],
+    },
+    ToolInfo {
         name: "patch_assembly",
         category: ToolCategory::Editing,
         short_desc: "Patch instructions with assembly text",
@@ -1085,6 +1109,38 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         default: false,
         keywords: &["rename", "symbol", "edit"],
         aliases: &["rename"],
+    },
+    ToolInfo {
+        name: "batch_rename",
+        category: ToolCategory::Editing,
+        short_desc: "Rename multiple symbols at once",
+        full_desc: "Rename multiple symbols in one call. Each entry specifies an address or current name \
+                    plus the new name. Results are returned per-entry (success/error). \
+                    Useful for leaf-first renaming workflows to reduce round-trips.",
+        example: r#"{"renames": [{"address": "0x1000", "new_name": "process_swap"}, {"current_name": "sub_2000", "new_name": "validate_amount"}]}"#,
+        default: false,
+        keywords: &["rename", "batch", "bulk", "symbol", "multiple"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "set_function_prototype",
+        category: ToolCategory::Editing,
+        short_desc: "Apply a C prototype declaration to a function",
+        full_desc: "Apply a C function prototype string to a function in the IDA database. \
+                    The prototype is parsed and applied using IDA's type system. \
+                    Example prototype: \"int __fastcall foo(void *ctx, int len)\"",
+        example: r#"{"address": "0x100000f00", "prototype": "int __fastcall process_swap(void *ctx, int amount)"}"#,
+        default: false,
+        keywords: &[
+            "prototype",
+            "type",
+            "function",
+            "set",
+            "declaration",
+            "signature",
+            "apply",
+        ],
+        aliases: &[],
     },
     ToolInfo {
         name: "rename_local_variable",

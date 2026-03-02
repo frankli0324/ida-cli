@@ -46,8 +46,7 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
         if !req.is_control() && req.is_resp_closed() {
             debug!(
                 request = req.type_name(),
-                wait_ms,
-                "Skipping cancelled request (caller disconnected)"
+                wait_ms, "Skipping cancelled request (caller disconnected)"
             );
             continue;
         }
@@ -175,6 +174,16 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     }
                     Err(e) => warn!(name = %name, error = %e, "Failed to resolve function"),
                 }
+                let _ = resp.send(result);
+            }
+            IdaRequest::GetFunctionPrototype { addr, name, resp } => {
+                debug!(address = ?addr, name = ?name, "Getting function prototype");
+                let result = functions::handle_get_function_prototype(&idb, addr, name.as_deref());
+                log_result!(
+                    result,
+                    "Got function prototype",
+                    "Failed to get function prototype"
+                );
                 let _ = resp.send(result);
             }
             IdaRequest::DisasmByName { name, count, resp } => {
@@ -311,6 +320,22 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     Ok(res) => debug!(code = res.code, "Inferred type"),
                     Err(e) => warn!(error = %e, "Failed to infer type"),
                 }
+                let _ = resp.send(result);
+            }
+            IdaRequest::SetFunctionPrototype {
+                addr,
+                name,
+                prototype,
+                resp,
+            } => {
+                debug!(address = ?addr, name = ?name, "Setting function prototype");
+                let result =
+                    types::handle_set_function_prototype(&idb, addr, name.as_deref(), &prototype);
+                log_result!(
+                    result,
+                    "Set function prototype",
+                    "Failed to set function prototype"
+                );
                 let _ = resp.send(result);
             }
             IdaRequest::AddrInfo {
@@ -614,6 +639,34 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 }
                 let _ = resp.send(result);
             }
+            IdaRequest::SetFunctionComment {
+                addr,
+                name,
+                comment,
+                repeatable,
+                resp,
+            } => {
+                let addr_log = addr
+                    .map(|a| format!("{a:#x}"))
+                    .unwrap_or_else(|| "none".to_string());
+                debug!(
+                    address = addr_log,
+                    name = ?name,
+                    repeatable,
+                    "Setting function comment"
+                );
+                let result = annotations::handle_set_function_comment(
+                    &idb,
+                    addr,
+                    name.as_deref(),
+                    &comment,
+                    repeatable,
+                );
+                if let Err(e) = &result {
+                    warn!(error = %e, "Failed to set function comment");
+                }
+                let _ = resp.send(result);
+            }
             IdaRequest::Rename {
                 addr,
                 current_name,
@@ -642,13 +695,24 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 }
                 let _ = resp.send(result);
             }
+            IdaRequest::BatchRename { entries, resp } => {
+                debug!(count = entries.len(), "Batch renaming symbols");
+                let result = annotations::handle_batch_rename(&idb, entries);
+                if let Err(e) = &result {
+                    warn!(error = %e, "Failed to batch rename symbols");
+                }
+                let _ = resp.send(result);
+            }
             IdaRequest::RenameLvar {
                 func_addr,
                 lvar_name,
                 new_name,
                 resp,
             } => {
-                debug!(func_address = format!("{func_addr:#x}"), lvar_name, new_name, "Renaming lvar");
+                debug!(
+                    func_address = format!("{func_addr:#x}"),
+                    lvar_name, new_name, "Renaming lvar"
+                );
                 let result =
                     annotations::handle_rename_lvar(&idb, func_addr, &lvar_name, &new_name);
                 if let Err(e) = &result {
@@ -662,7 +726,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 type_str,
                 resp,
             } => {
-                debug!(func_address = format!("{func_addr:#x}"), lvar_name, type_str, "Setting lvar type");
+                debug!(
+                    func_address = format!("{func_addr:#x}"),
+                    lvar_name, type_str, "Setting lvar type"
+                );
                 let result =
                     annotations::handle_set_lvar_type(&idb, func_addr, &lvar_name, &type_str);
                 if let Err(e) = &result {
