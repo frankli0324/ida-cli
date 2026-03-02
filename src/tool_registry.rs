@@ -307,7 +307,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         full_desc: "Incrementally load a single dylib into a database previously opened via open_dsc. \
                     Uses the dscu plugin to add the module, then runs ObjC type analysis. \
                     Skips full auto-analysis to keep the operation fast. \
-                    Call once per module; use list_functions or analysis_status to verify after loading. \
+                    Call once per module; use list_functions or get_analysis_status to verify after loading. \
                     Requires: database opened via open_dsc.",
         example: r#"{"module": "/System/Library/Frameworks/Foundation.framework/Foundation", "timeout_secs": 300}"#,
         default: false,
@@ -327,7 +327,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         aliases: &[],
     },
     ToolInfo {
-        name: "analysis_status",
+        name: "get_analysis_status",
         category: ToolCategory::Core,
         short_desc: "Report auto-analysis status",
         full_desc: "Report auto-analysis status (auto_is_ok, auto_state) so clients can \
@@ -335,7 +335,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: true,
         keywords: &["analysis", "autoanalysis", "status", "xrefs", "decompile"],
-        aliases: &[],
+        aliases: &["analysis_status"],
     },
     ToolInfo {
         name: "close_idb",
@@ -375,7 +375,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         aliases: &[],
     },
     ToolInfo {
-        name: "task_status",
+        name: "get_task_status",
         category: ToolCategory::Core,
         short_desc: "Check status of a background task (e.g. DSC loading)",
         full_desc: "Check the status of a background task started by open_dsc. \
@@ -385,10 +385,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"task_id": "dsc-abc123"}"#,
         default: true,
         keywords: &["task", "status", "poll", "background", "dsc", "progress"],
-        aliases: &[],
+        aliases: &["task_status"],
     },
     ToolInfo {
-        name: "idb_meta",
+        name: "get_database_info",
         category: ToolCategory::Core,
         short_desc: "Get database metadata and summary",
         full_desc: "Returns metadata about the currently open database: \
@@ -397,7 +397,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: true,
         keywords: &["info", "metadata", "summary", "database", "binary"],
-        aliases: &[],
+        aliases: &["idb_meta"],
     },
 
     // === FUNCTIONS ===
@@ -411,21 +411,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100, "filter": "init"}"#,
         default: false,
         keywords: &["functions", "list", "enumerate", "find", "filter", "subroutines"],
-        aliases: &[],
+        aliases: &["list_funcs"],
     },
     ToolInfo {
-        name: "list_funcs",
-        category: ToolCategory::Functions,
-        short_desc: "Alias of list_functions",
-        full_desc: "Alias of list_functions. Lists all functions in the database with pagination \
-                    and optional name filtering.",
-        example: r#"{"offset": 0, "limit": 100, "filter": "init"}"#,
-        default: false,
-        keywords: &["functions", "list", "alias"],
-        aliases: &[],
-    },
-    ToolInfo {
-        name: "resolve_function",
+        name: "get_function_by_name",
         category: ToolCategory::Functions,
         short_desc: "Find function address by name",
         full_desc: "Resolve a function name to its address. Supports exact names and demangled names. \
@@ -433,10 +422,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "main"}"#,
         default: false,
         keywords: &["resolve", "find", "lookup", "function", "name", "address"],
-        aliases: &[],
+        aliases: &["resolve_function"],
     },
     ToolInfo {
-        name: "function_at",
+        name: "get_function_at_address",
         category: ToolCategory::Functions,
         short_desc: "Find the function containing an address",
         full_desc: "Return the function that contains the given address, including start/end and size. \
@@ -444,21 +433,21 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["function", "address", "pc", "lr", "containing"],
-        aliases: &[],
+        aliases: &["function_at"],
     },
     ToolInfo {
-        name: "lookup_funcs",
+        name: "batch_lookup_functions",
         category: ToolCategory::Functions,
         short_desc: "Batch lookup multiple functions by name",
         full_desc: "Look up multiple function names at once. Returns address and size for each found function. \
-                    More efficient than multiple resolve_function calls.",
+                    More efficient than multiple get_function_by_name calls.",
         example: r#"{"names": ["main", "printf", "malloc"]}"#,
         default: false,
         keywords: &["lookup", "batch", "multiple", "functions", "names"],
-        aliases: &[],
+        aliases: &["lookup_funcs"],
     },
     ToolInfo {
-        name: "analyze_funcs",
+        name: "run_auto_analysis",
         category: ToolCategory::Functions,
         short_desc: "Run auto-analysis and wait for completion",
         full_desc: "Run IDA auto-analysis and wait for completion. \
@@ -466,12 +455,12 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"timeout_secs": 120}"#,
         default: false,
         keywords: &["analyze", "functions", "analysis", "auto"],
-        aliases: &[],
+        aliases: &["analyze_funcs"],
     },
 
     // === DISASSEMBLY ===
     ToolInfo {
-        name: "disasm",
+        name: "disassemble",
         category: ToolCategory::Disassembly,
         short_desc: "Disassemble instructions at an address",
         full_desc: "Disassemble machine code starting at the given address. \
@@ -480,10 +469,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000", "count": 20}"#,
         default: false,
         keywords: &["disassemble", "disasm", "assembly", "instructions", "code"],
-        aliases: &[],
+        aliases: &["disasm"],
     },
     ToolInfo {
-        name: "disasm_by_name",
+        name: "disassemble_function",
         category: ToolCategory::Disassembly,
         short_desc: "Disassemble a function by name",
         full_desc: "Disassemble a function given its name. Resolves the name to an address \
@@ -491,10 +480,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "main", "count": 50}"#,
         default: false,
         keywords: &["disassemble", "function", "name", "assembly"],
-        aliases: &[],
+        aliases: &["disasm_by_name"],
     },
     ToolInfo {
-        name: "disasm_function_at",
+        name: "disassemble_function_at",
         category: ToolCategory::Disassembly,
         short_desc: "Disassemble the function containing an address",
         full_desc: "Disassemble the function that contains the provided address. \
@@ -502,12 +491,12 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000", "count": 200}"#,
         default: false,
         keywords: &["disassemble", "function", "address", "pc", "lr"],
-        aliases: &[],
+        aliases: &["disasm_function_at"],
     },
 
     // === DECOMPILE ===
     ToolInfo {
-        name: "decompile",
+        name: "decompile_function",
         category: ToolCategory::Decompile,
         short_desc: "Decompile function to C pseudocode",
         full_desc: "Decompile a function using Hex-Rays decompiler (if available). \
@@ -515,19 +504,19 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["decompile", "pseudocode", "c", "source", "hex-rays"],
-        aliases: &[],
+        aliases: &["decompile"],
     },
     ToolInfo {
-        name: "pseudocode_at",
+        name: "get_pseudocode_at",
         category: ToolCategory::Decompile,
         short_desc: "Get pseudocode for specific address/range",
         full_desc: "Get decompiled pseudocode for a specific address or address range (e.g., a basic block). \
-                    Unlike decompile which returns the full function, this returns only statements \
+                    Unlike decompile_function which returns the full function, this returns only statements \
                     corresponding to the given address(es).",
         example: r#"{"address": "0x1000", "end_address": "0x1020"}"#,
         default: false,
         keywords: &["pseudocode", "decompile", "block", "range", "statement"],
-        aliases: &[],
+        aliases: &["pseudocode_at"],
     },
     ToolInfo {
         name: "decompile_structured",
@@ -576,7 +565,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         aliases: &[],
     },
     ToolInfo {
-        name: "table_scan",
+        name: "scan_memory_table",
         category: ToolCategory::Memory,
         short_desc: "Scan a memory table by reading entries at stride intervals",
         full_desc: "Read memory at a base address, stepping by stride bytes for count entries. \
@@ -586,10 +575,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"base_address": "0x1000", "stride": 8, "count": 16}"#,
         default: false,
         keywords: &["table", "scan", "memory", "vtable", "pointer", "stride", "bytes"],
-        aliases: &[],
+        aliases: &["table_scan"],
     },
     ToolInfo {
-        name: "diff_functions",
+        name: "diff_pseudocode",
         category: ToolCategory::Decompile,
         short_desc: "Diff two functions' decompiled pseudocode line by line",
         full_desc: "Decompile two functions and produce a line-by-line diff of their pseudocode. \
@@ -599,12 +588,12 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"addr1": "0x1000", "addr2": "0x2000"}"#,
         default: false,
         keywords: &["diff", "compare", "functions", "decompile", "pseudocode", "similarity"],
-        aliases: &[],
+        aliases: &["diff_functions"],
     },
 
     // === XREFS ===
     ToolInfo {
-        name: "xrefs_to",
+        name: "get_xrefs_to",
         category: ToolCategory::Xrefs,
         short_desc: "Find all references TO an address",
         full_desc: "Find all cross-references pointing to the given address. \
@@ -613,10 +602,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["xrefs", "references", "to", "callers", "usage"],
-        aliases: &[],
+        aliases: &["xrefs_to"],
     },
     ToolInfo {
-        name: "xrefs_from",
+        name: "get_xrefs_from",
         category: ToolCategory::Xrefs,
         short_desc: "Find all references FROM an address",
         full_desc: "Find all cross-references originating from the given address. \
@@ -625,10 +614,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["xrefs", "references", "from", "callees", "targets"],
-        aliases: &[],
+        aliases: &["xrefs_from"],
     },
     ToolInfo {
-        name: "xrefs_to_string",
+        name: "get_xrefs_to_string",
         category: ToolCategory::Xrefs,
         short_desc: "Find xrefs to strings matching a query",
         full_desc: "Find strings that match a query and return xrefs to each match. \
@@ -636,10 +625,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"query": "value=%d", "limit": 10}"#,
         default: false,
         keywords: &["xrefs", "strings", "cstring", "references", "usage"],
-        aliases: &[],
+        aliases: &["xrefs_to_string"],
     },
     ToolInfo {
-        name: "xref_matrix",
+        name: "build_xref_matrix",
         category: ToolCategory::Xrefs,
         short_desc: "Build xref matrix between addresses",
         full_desc: "Build a cross-reference matrix showing relationships between multiple addresses. \
@@ -647,12 +636,12 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"addresses": ["0x1000", "0x2000", "0x3000"]}"#,
         default: false,
         keywords: &["xrefs", "matrix", "relationships", "graph"],
-        aliases: &[],
+        aliases: &["xref_matrix"],
     },
 
     // === CONTROL FLOW ===
     ToolInfo {
-        name: "basic_blocks",
+        name: "get_basic_blocks",
         category: ToolCategory::ControlFlow,
         short_desc: "Get basic blocks of a function",
         full_desc: "Get the control flow graph basic blocks for a function. \
@@ -660,10 +649,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["basic", "blocks", "cfg", "control", "flow", "graph"],
-        aliases: &[],
+        aliases: &["basic_blocks"],
     },
     ToolInfo {
-        name: "callers",
+        name: "get_callers",
         category: ToolCategory::ControlFlow,
         short_desc: "Find all callers of a function",
         full_desc: "Find all functions that call the specified function. \
@@ -671,10 +660,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["callers", "called", "by", "references", "xrefs"],
-        aliases: &[],
+        aliases: &["callers"],
     },
     ToolInfo {
-        name: "callees",
+        name: "get_callees",
         category: ToolCategory::ControlFlow,
         short_desc: "Find all functions called by a function",
         full_desc: "Find all functions that are called by the specified function. \
@@ -682,10 +671,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["callees", "calls", "targets", "functions"],
-        aliases: &[],
+        aliases: &["callees"],
     },
     ToolInfo {
-        name: "callgraph",
+        name: "build_callgraph",
         category: ToolCategory::ControlFlow,
         short_desc: "Build call graph from a function",
         full_desc: "Build a call graph starting from a function, exploring callers/callees \
@@ -693,10 +682,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"roots": "0x1000", "max_depth": 2, "max_nodes": 256}"#,
         default: false,
         keywords: &["callgraph", "call", "graph", "depth", "tree"],
-        aliases: &[],
+        aliases: &["callgraph"],
     },
     ToolInfo {
-        name: "find_paths",
+        name: "find_control_flow_paths",
         category: ToolCategory::ControlFlow,
         short_desc: "Find control-flow paths between two addresses",
         full_desc: "Find control-flow paths between two addresses within the same function. \
@@ -704,12 +693,12 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"start": "0x1000", "end": "0x2000", "max_depth": 5}"#,
         default: false,
         keywords: &["paths", "route", "flow", "between", "reach"],
-        aliases: &[],
+        aliases: &["find_paths"],
     },
 
     // === MEMORY ===
     ToolInfo {
-        name: "get_bytes",
+        name: "read_bytes",
         category: ToolCategory::Memory,
         short_desc: "Read raw bytes from an address",
         full_desc: "Read raw bytes from the database at the specified address. \
@@ -718,10 +707,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": 0, "size": 32}"#,
         default: false,
         keywords: &["bytes", "read", "memory", "data", "raw", "hex"],
-        aliases: &[],
+        aliases: &["get_bytes"],
     },
     ToolInfo {
-        name: "get_string",
+        name: "read_string",
         category: ToolCategory::Memory,
         short_desc: "Read string at an address",
         full_desc: "Read a null-terminated string at the specified address. \
@@ -729,72 +718,72 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["string", "read", "text", "ascii", "data"],
-        aliases: &[],
+        aliases: &["get_string"],
     },
     ToolInfo {
-        name: "get_u8",
+        name: "read_byte",
         category: ToolCategory::Memory,
         short_desc: "Read 8-bit value",
         full_desc: "Read an unsigned 8-bit value (byte) at the specified address.",
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["byte", "u8", "read", "value"],
-        aliases: &[],
+        aliases: &["get_u8"],
     },
     ToolInfo {
-        name: "get_u16",
+        name: "read_word",
         category: ToolCategory::Memory,
         short_desc: "Read 16-bit value",
         full_desc: "Read an unsigned 16-bit value (word) at the specified address.",
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["word", "u16", "read", "value"],
-        aliases: &[],
+        aliases: &["get_u16"],
     },
     ToolInfo {
-        name: "get_u32",
+        name: "read_dword",
         category: ToolCategory::Memory,
         short_desc: "Read 32-bit value",
         full_desc: "Read an unsigned 32-bit value (dword) at the specified address.",
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["dword", "u32", "read", "value"],
-        aliases: &[],
+        aliases: &["get_u32"],
     },
     ToolInfo {
-        name: "get_u64",
+        name: "read_qword",
         category: ToolCategory::Memory,
         short_desc: "Read 64-bit value",
         full_desc: "Read an unsigned 64-bit value (qword) at the specified address.",
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["qword", "u64", "read", "value"],
-        aliases: &[],
+        aliases: &["get_u64"],
     },
     ToolInfo {
-        name: "get_global_value",
+        name: "read_global_variable",
         category: ToolCategory::Memory,
         short_desc: "Read global value by name or address",
         full_desc: "Read a global value by name or address. Returns value and raw bytes.",
         example: r#"{"query": "g_flag"}"#,
         default: false,
         keywords: &["global", "value", "read", "symbol", "data"],
-        aliases: &[],
+        aliases: &["get_global_value"],
     },
     ToolInfo {
-        name: "int_convert",
+        name: "convert_number",
         category: ToolCategory::Memory,
         short_desc: "Convert integers between bases",
         full_desc: "Convert integers between decimal/hex/binary and show ASCII bytes when possible.",
         example: r#"{"inputs": ["0x41424344", 1234]}"#,
         default: false,
         keywords: &["int", "convert", "hex", "decimal", "ascii"],
-        aliases: &[],
+        aliases: &["int_convert"],
     },
 
     // === SEARCH ===
     ToolInfo {
-        name: "find_bytes",
+        name: "search_bytes",
         category: ToolCategory::Search,
         short_desc: "Search for byte pattern",
         full_desc: "Search for a byte pattern in the database. Supports wildcards. \
@@ -802,21 +791,21 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"pattern": "48 89 5C 24", "limit": 100}"#,
         default: false,
         keywords: &["find", "search", "bytes", "pattern", "hex"],
-        aliases: &[],
+        aliases: &["find_bytes"],
     },
     ToolInfo {
-        name: "search",
+        name: "search_text",
         category: ToolCategory::Search,
         short_desc: "Search for text or immediate values",
         full_desc: "General search tool. Searches for text strings or immediate values \
-                    in instructions. Use find_bytes for byte-pattern searches.",
+                    in instructions. Use search_bytes for byte-pattern searches.",
         example: r#"{"targets": "password", "kind": "text"}"#,
         default: false,
         keywords: &["search", "find", "text", "string", "immediate"],
-        aliases: &[],
+        aliases: &["search"],
     },
     ToolInfo {
-        name: "strings",
+        name: "list_strings",
         category: ToolCategory::Search,
         short_desc: "List all strings in the database",
         full_desc: "List strings found in the database with pagination and optional \
@@ -824,32 +813,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"offset": 0, "limit": 100, "filter": "http"}"#,
         default: false,
         keywords: &["strings", "list", "text", "data"],
-        aliases: &[],
+        aliases: &["strings", "find_string", "analyze_strings"],
     },
     ToolInfo {
-        name: "find_string",
-        category: ToolCategory::Search,
-        short_desc: "Find strings matching a query",
-        full_desc: "Find strings that match a query (substring by default, optional exact match). \
-                    Supports pagination.",
-        example: r#"{"query": "value=%d", "limit": 20}"#,
-        default: false,
-        keywords: &["strings", "find", "search", "text"],
-        aliases: &[],
-    },
-    ToolInfo {
-        name: "analyze_strings",
-        category: ToolCategory::Search,
-        short_desc: "Analyze strings with filtering",
-        full_desc: "List strings with optional substring filter and pagination. \
-                    Useful for finding specific string patterns like URLs or paths.",
-        example: r#"{"query": "http", "offset": 0, "limit": 100}"#,
-        default: false,
-        keywords: &["strings", "analyze", "filter", "pattern"],
-        aliases: &[],
-    },
-    ToolInfo {
-        name: "find_insns",
+        name: "search_instructions",
         category: ToolCategory::Search,
         short_desc: "Find instruction sequences by mnemonic",
         full_desc: "Search for instruction mnemonic patterns. If patterns is an array, matches \
@@ -858,10 +825,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"patterns": ["mov", "bl"], "limit": 5}"#,
         default: false,
         keywords: &["find", "instructions", "sequence", "pattern"],
-        aliases: &[],
+        aliases: &["find_insns"],
     },
     ToolInfo {
-        name: "find_insn_operands",
+        name: "search_instruction_operands",
         category: ToolCategory::Search,
         short_desc: "Find instructions by operand substring",
         full_desc: "Search for instructions whose operand text matches any provided substring. \
@@ -869,12 +836,12 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"patterns": ["sp", "0x10"], "limit": 5}"#,
         default: false,
         keywords: &["find", "operands", "instructions", "pattern"],
-        aliases: &[],
+        aliases: &["find_insn_operands"],
     },
 
     // === METADATA ===
     ToolInfo {
-        name: "segments",
+        name: "list_segments",
         category: ToolCategory::Metadata,
         short_desc: "List all segments",
         full_desc: "List all segments in the database with their addresses, sizes, \
@@ -882,10 +849,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{}"#,
         default: false,
         keywords: &["segments", "sections", "memory", "layout"],
-        aliases: &[],
+        aliases: &["segments"],
     },
     ToolInfo {
-        name: "addr_info",
+        name: "get_address_info",
         category: ToolCategory::Metadata,
         short_desc: "Resolve address to segment/function/symbol",
         full_desc: "Return address context including segment info, containing function, \
@@ -893,47 +860,47 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["address", "segment", "function", "symbol", "context"],
-        aliases: &[],
+        aliases: &["addr_info"],
     },
     ToolInfo {
-        name: "imports",
+        name: "list_imports",
         category: ToolCategory::Metadata,
         short_desc: "List imported functions",
         full_desc: "List all imported external symbols with their addresses and names.",
         example: r#"{"offset": 0, "limit": 100}"#,
         default: false,
         keywords: &["imports", "external", "libraries", "api"],
-        aliases: &[],
+        aliases: &["imports"],
     },
     ToolInfo {
-        name: "exports",
+        name: "list_exports",
         category: ToolCategory::Metadata,
         short_desc: "List exported functions",
         full_desc: "List all exported functions/symbols with their addresses and names.",
         example: r#"{"offset": 0, "limit": 100}"#,
         default: false,
         keywords: &["exports", "symbols", "public", "api"],
-        aliases: &[],
+        aliases: &["exports"],
     },
     ToolInfo {
-        name: "export_funcs",
+        name: "export_functions",
         category: ToolCategory::Metadata,
         short_desc: "Export functions (JSON)",
         full_desc: "Export functions in JSON format. If addrs is provided, only export those functions.",
         example: r#"{"addrs": ["0x1000", "0x2000"], "format": "json"}"#,
         default: false,
         keywords: &["export", "functions", "json", "dump"],
-        aliases: &[],
+        aliases: &["export_funcs"],
     },
     ToolInfo {
-        name: "entrypoints",
+        name: "list_entry_points",
         category: ToolCategory::Metadata,
         short_desc: "List entry points",
         full_desc: "List all entry points in the binary (main, DllMain, etc.).",
         example: r#"{}"#,
         default: false,
         keywords: &["entry", "start", "main", "entrypoint"],
-        aliases: &[],
+        aliases: &["entrypoints"],
     },
     ToolInfo {
         name: "list_globals",
@@ -948,37 +915,37 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
 
     // === TYPES / STRUCTS ===
     ToolInfo {
-        name: "local_types",
+        name: "list_local_types",
         category: ToolCategory::Types,
         short_desc: "List local types",
         full_desc: "List local types (typedefs, enums, structs, etc.) with pagination and optional filter.",
         example: r#"{"query": "struct", "limit": 50}"#,
         default: false,
         keywords: &["types", "local", "typedef"],
-        aliases: &[],
+        aliases: &["local_types"],
     },
     ToolInfo {
-        name: "xrefs_to_field",
+        name: "get_xrefs_to_struct_field",
         category: ToolCategory::Xrefs,
         short_desc: "Xrefs to a struct field",
         full_desc: "Get cross-references to a struct field by struct name/ordinal and member name/index.",
         example: r#"{"name": "Outer", "member_name": "inner", "limit": 25}"#,
         default: false,
         keywords: &["xrefs", "struct", "field", "member"],
-        aliases: &[],
+        aliases: &["xrefs_to_field"],
     },
     ToolInfo {
-        name: "declare_type",
+        name: "declare_c_type",
         category: ToolCategory::Types,
         short_desc: "Declare a type in the local type library",
         full_desc: "Parse a C declaration and store it in the local type library (optionally replacing existing).",
         example: r#"{"decl": "typedef int mcp_int_t;", "replace": true}"#,
         default: false,
         keywords: &["type", "declare", "typedef"],
-        aliases: &[],
+        aliases: &["declare_type"],
     },
     ToolInfo {
-        name: "apply_types",
+        name: "apply_type",
         category: ToolCategory::Types,
         short_desc: "Apply a type to an address or stack variable",
         full_desc: "Apply a named type or C declaration to an address/symbol. \
@@ -986,20 +953,20 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "stack_offset": -16, "decl": "int mcp_local;"}"#,
         default: false,
         keywords: &["types", "apply", "annotations"],
-        aliases: &[],
+        aliases: &["apply_types"],
     },
     ToolInfo {
-        name: "infer_types",
+        name: "infer_type",
         category: ToolCategory::Types,
         short_desc: "Infer/guess type at an address",
         full_desc: "Guess a type for an address or symbol using IDA's heuristics.",
         example: r#"{"name": "interesting_function"}"#,
         default: false,
         keywords: &["types", "infer", "analysis"],
-        aliases: &[],
+        aliases: &["infer_types"],
     },
     ToolInfo {
-        name: "stack_frame",
+        name: "get_stack_frame",
         category: ToolCategory::Types,
         short_desc: "Get stack frame info",
         full_desc: "Get stack frame layout for the function at an address, including \
@@ -1007,10 +974,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"address": "0x1000"}"#,
         default: false,
         keywords: &["stack", "frame", "locals"],
-        aliases: &[],
+        aliases: &["stack_frame"],
     },
     ToolInfo {
-        name: "declare_stack",
+        name: "create_stack_variable",
         category: ToolCategory::Types,
         short_desc: "Declare a stack variable",
         full_desc: "Define a stack variable in a function frame using a C declaration. \
@@ -1018,47 +985,47 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": -16, "var_name": "mcp_local", "decl": "int mcp_local;"}"#,
         default: false,
         keywords: &["stack", "declare", "variable"],
-        aliases: &[],
+        aliases: &["declare_stack"],
     },
     ToolInfo {
-        name: "delete_stack",
+        name: "delete_stack_variable",
         category: ToolCategory::Types,
         short_desc: "Delete a stack variable",
         full_desc: "Delete a stack variable by name or offset in a function frame.",
         example: r#"{"name": "interesting_function", "offset": -16}"#,
         default: false,
         keywords: &["stack", "delete", "variable"],
-        aliases: &[],
+        aliases: &["delete_stack"],
     },
     ToolInfo {
-        name: "structs",
+        name: "list_structs",
         category: ToolCategory::Types,
         short_desc: "List structs with pagination",
         full_desc: "List structs (UDTs) in the database with optional name filtering.",
         example: r#"{"limit": 50, "filter": "objc"}"#,
         default: false,
         keywords: &["structs", "types", "list"],
-        aliases: &[],
+        aliases: &["structs"],
     },
     ToolInfo {
-        name: "struct_info",
+        name: "get_struct_info",
         category: ToolCategory::Types,
         short_desc: "Get struct info by name or ordinal",
         full_desc: "Get struct details including member layout and sizes.",
         example: r#"{"name": "MyStruct"}"#,
         default: false,
         keywords: &["struct", "info", "types"],
-        aliases: &[],
+        aliases: &["struct_info"],
     },
     ToolInfo {
-        name: "read_struct",
+        name: "read_struct_at_address",
         category: ToolCategory::Types,
         short_desc: "Read a struct instance at an address",
         full_desc: "Read raw bytes for each struct member at a given address.",
         example: r#"{"address": "0x1000", "name": "MyStruct"}"#,
         default: false,
         keywords: &["struct", "read", "values"],
-        aliases: &[],
+        aliases: &["read_struct"],
     },
     ToolInfo {
         name: "search_structs",
@@ -1074,7 +1041,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
 
     // === EDITING / PATCHING ===
     ToolInfo {
-        name: "set_comments",
+        name: "set_comment",
         category: ToolCategory::Editing,
         short_desc: "Set comments at an address",
         full_desc: "Set a non-repeatable or repeatable comment at an address. \
@@ -1083,10 +1050,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "comment": "note", "repeatable": false}"#,
         default: false,
         keywords: &["comments", "set", "annotate"],
-        aliases: &[],
+        aliases: &["set_comments"],
     },
     ToolInfo {
-        name: "patch_asm",
+        name: "patch_assembly",
         category: ToolCategory::Editing,
         short_desc: "Patch instructions with assembly text",
         full_desc: "Assemble a single instruction line at the target address and patch the bytes. \
@@ -1095,10 +1062,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": 0, "line": "nop"}"#,
         default: false,
         keywords: &["patch", "asm", "edit", "modify"],
-        aliases: &[],
+        aliases: &["patch_asm"],
     },
     ToolInfo {
-        name: "patch",
+        name: "patch_bytes",
         category: ToolCategory::Editing,
         short_desc: "Patch bytes at an address",
         full_desc: "Patch bytes in the database at the given address. \
@@ -1106,10 +1073,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"name": "interesting_function", "offset": 0, "bytes": "1f 20 03 d5"}"#,
         default: false,
         keywords: &["patch", "bytes", "edit", "modify"],
-        aliases: &[],
+        aliases: &["patch"],
     },
     ToolInfo {
-        name: "rename",
+        name: "rename_symbol",
         category: ToolCategory::Editing,
         short_desc: "Rename symbols",
         full_desc: "Rename a symbol at an address. Optional flags map to IDA set_name flags. \
@@ -1117,10 +1084,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"current_name": "interesting_function", "name": "interesting_function_renamed", "flags": 0}"#,
         default: false,
         keywords: &["rename", "symbol", "edit"],
-        aliases: &[],
+        aliases: &["rename"],
     },
     ToolInfo {
-        name: "rename_lvar",
+        name: "rename_local_variable",
         category: ToolCategory::Editing,
         short_desc: "Rename a local variable in decompiled pseudocode",
         full_desc: "Rename a local variable in the Hex-Rays decompiled pseudocode. \
@@ -1128,10 +1095,10 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"func_address": "0x100000f00", "lvar_name": "v1", "new_name": "buffer_size"}"#,
         default: false,
         keywords: &["rename", "lvar", "local", "variable", "decompiler", "pseudocode"],
-        aliases: &[],
+        aliases: &["rename_lvar"],
     },
     ToolInfo {
-        name: "set_lvar_type",
+        name: "set_local_variable_type",
         category: ToolCategory::Editing,
         short_desc: "Set the type of a local variable in decompiled pseudocode",
         full_desc: "Change the type of a local variable in the Hex-Rays decompiled pseudocode. \
@@ -1140,7 +1107,7 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         example: r#"{"func_address": "0x100000f00", "lvar_name": "v1", "type_str": "char *"}"#,
         default: false,
         keywords: &["type", "lvar", "local", "variable", "decompiler", "pseudocode", "retype"],
-        aliases: &[],
+        aliases: &["set_lvar_type"],
     },
     ToolInfo {
         name: "set_decompiler_comment",
@@ -1298,15 +1265,15 @@ mod tests {
         assert!(defaults.iter().any(|t| t.name == "open_idb"));
         assert!(defaults.iter().any(|t| t.name == "tool_catalog"));
         assert!(defaults.iter().any(|t| t.name == "tool_help"));
-        assert!(defaults.iter().any(|t| t.name == "idb_meta"));
+        assert!(defaults.iter().any(|t| t.name == "get_database_info"));
     }
 
     #[test]
     fn test_search_tools() {
         let results = search_tools("find callers function", 5);
         assert!(!results.is_empty());
-        // Should find "callers" tool
-        assert!(results.iter().any(|(t, _)| t.name == "callers"));
+        // Should find "get_callers" tool
+        assert!(results.iter().any(|(t, _)| t.name == "get_callers"));
     }
 
     #[test]
