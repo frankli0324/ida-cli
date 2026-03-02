@@ -33,7 +33,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tower_service::Service;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter, Layer};
 
 const REQUEST_QUEUE_CAPACITY: usize = 64;
@@ -339,6 +339,10 @@ fn run_serve_worker() -> anyhow::Result<()> {
     let (tx, rx) = mpsc::sync_channel(REQUEST_QUEUE_CAPACITY);
     let worker = IdaWorker::new(tx);
 
+    // Oneshot channel: main thread signals after IDA loop exits (DB closed & lock released).
+    // The orphan monitor awaits this before calling process::exit.
+    let (ida_done_tx, ida_done_rx) = tokio::sync::oneshot::channel::<()>();
+
     let worker_for_rpc = worker.clone();
     let server_handle = thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -354,6 +358,40 @@ fn run_serve_worker() -> anyhow::Result<()> {
             let mut reader = tokio::io::BufReader::new(stdin);
             let mut writer = tokio::io::BufWriter::new(stdout);
             let mut line_buf = String::new();
+
+            // Orphan detection: monitor parent process liveness.
+            // When the parent (router) is killed/crashed, getppid() changes
+            // (reparented to init). The monitor triggers shutdown so the
+            // worker doesn't linger as an orphan holding IDB locks.
+            #[cfg(unix)]
+            {
+                let worker_for_monitor = worker_for_rpc.clone();
+                tokio::spawn(async move {
+                    let parent_pid = unsafe { libc::getppid() };
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                    loop {
+                        interval.tick().await;
+                        let current = unsafe { libc::getppid() };
+                        if current != parent_pid {
+                            warn!(
+                                "Parent process died (ppid {} -> {}), worker self-terminating",
+                                parent_pid, current
+                            );
+                            let _ = worker_for_monitor.shutdown().await;
+                            // Wait for IDA loop to confirm DB closure, or timeout.
+                            tokio::select! {
+                                _ = ida_done_rx => {
+                                    info!("IDA loop confirmed done, exiting");
+                                }
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                                    warn!("IDA loop did not finish within 30s, forcing exit");
+                                }
+                            }
+                            std::process::exit(1);
+                        }
+                    }
+                });
+            }
 
             loop {
                 line_buf.clear();
@@ -427,7 +465,7 @@ fn run_serve_worker() -> anyhow::Result<()> {
     info!("Starting IDA worker loop (worker mode)");
     ida::run_ida_loop(rx);
     info!("IDA worker loop finished");
-
+    let _ = ida_done_tx.send(());
     if let Err(e) = server_handle.join() {
         error!("Worker RPC handler thread panicked: {:?}", e);
     }
