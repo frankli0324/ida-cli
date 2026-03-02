@@ -815,29 +815,93 @@ impl IdaMcpServer {
             self.open_idb(Parameters(idb_req)).await?
         };
 
+        // Extract db_handle from open result (needed for subsequent queries).
+        let db_handle: Option<String> = result
+            .content
+            .first()
+            .and_then(|c| match &c.raw {
+                rmcp::model::RawContent::Text(t) => {
+                                    serde_json::from_str::<serde_json::Value>(&t.text).ok()
+                        .and_then(|v| v.get("db_handle")?.as_str().map(String::from))
+                }
+                _ => None,
+            });
+
         // Try to resolve the Solana program entrypoint for convenience.
         // The entrypoint!() macro produces a function named "entrypoint"
         // in the AOT-compiled dylib — this is the real program logic entry,
         // NOT the sbpf2host runtime wrapper ("sbpf_entrypoint").
-        let entrypoint_json = {
-            let db_handle: Option<String> = result
-                .content
-                .first()
-                .and_then(|c| match &c.raw {
-                    rmcp::model::RawContent::Text(t) => serde_json::from_str::<serde_json::Value>(&t.text)
-                        .ok()
-                        .and_then(|v| v.get("db_handle")?.as_str().map(String::from)),
+        let entrypoint_json = if let Some(ref handle) = db_handle {
+            if let ServerMode::Router(ref router) = self.mode {
+                match self
+                    .route_or_err(
+                        router,
+                        Some(handle),
+                        "resolve_function",
+                        json!({"name": "entrypoint"}),
+                    )
+                    .await
+                {
+                    Ok(r) if !r.is_error.unwrap_or(false) => r
+                        .content
+                        .first()
+                        .and_then(|c| match &c.raw {
+                            rmcp::model::RawContent::Text(t) => {
+                                serde_json::from_str::<serde_json::Value>(&t.text).ok()
+                            }
+                            _ => None,
+                        }),
                     _ => None,
-                });
+                }
+            } else {
+                self.worker
+                    .resolve_function("entrypoint")
+                    .await
+                    .ok()
+                    .map(|info| json!({
+                        "name": info.name,
+                        "address": info.address,
+                        "size": info.size,
+                    }))
+            }
+        } else {
+            None
+        };
 
-            if let Some(ref handle) = db_handle {
+        // Try to detect process_instruction via callgraph analysis.
+        //
+        // Solana's entrypoint!() macro expands to exactly 2 calls:
+        //   1. deserialize(input)   — parse input buffer into accounts/data
+        //   2. process_instruction  — instruction dispatch (many sub-callees)
+        //
+        // Detection: entrypoint callgraph depth=2, exactly 2 direct callees,
+        // the one with more sub-callees is process_instruction.
+        // If the pattern doesn't match, we don't guess — return None.
+        let process_instruction_json: Option<serde_json::Value> = 'pi: {
+            let ep_addr = entrypoint_json
+                .as_ref()
+                .and_then(|ep| ep.get("address"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| {
+                    u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
+                });
+            let (Some(ep_addr), Some(ref handle)) = (ep_addr, &db_handle) else {
+                break 'pi None;
+            };
+
+            // Get callgraph from entrypoint (depth=2 to see sub-callees).
+            let cg_value: Option<serde_json::Value> =
                 if let ServerMode::Router(ref router) = self.mode {
                     match self
                         .route_or_err(
                             router,
                             Some(handle),
-                            "resolve_function",
-                            json!({"name": "entrypoint"}),
+                            "callgraph",
+                            json!({
+                                "roots": format!("0x{:x}", ep_addr),
+                                "max_depth": 2,
+                                "max_nodes": 256,
+                            }),
                         )
                         .await
                     {
@@ -853,18 +917,91 @@ impl IdaMcpServer {
                         _ => None,
                     }
                 } else {
-                    self.worker
-                        .resolve_function("entrypoint")
-                        .await
-                        .ok()
-                        .map(|info| json!({
-                            "name": info.name,
-                            "address": info.address,
-                            "size": info.size,
-                        }))
+                    self.worker.callgraph(ep_addr, 2, 256).await.ok()
+                };
+
+            let Some(cg) = cg_value else { break 'pi None };
+            let Some(edges) = cg.get("edges").and_then(|v| v.as_array()) else {
+                break 'pi None;
+            };
+
+            let ep_hex = format!("0x{:x}", ep_addr);
+
+            // Direct callees of entrypoint.
+            let direct_callees: Vec<&str> = edges
+                .iter()
+                .filter_map(|e| {
+                    if e.get("from")?.as_str()? == ep_hex {
+                        e.get("to")?.as_str()
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // Must be exactly 2 (deserialize + process_instruction).
+            if direct_callees.len() != 2 {
+                break 'pi None;
+            }
+
+            // Count sub-callees for each direct callee.
+            let count0 = edges
+                .iter()
+                .filter(|e| e.get("from").and_then(|v| v.as_str()) == Some(direct_callees[0]))
+                .count();
+            let count1 = edges
+                .iter()
+                .filter(|e| e.get("from").and_then(|v| v.as_str()) == Some(direct_callees[1]))
+                .count();
+
+            // process_instruction has more sub-callees (instruction handlers).
+            // If counts are equal, we can't distinguish — skip.
+            if count0 == count1 {
+                break 'pi None;
+            }
+            let pi_hex = if count0 > count1 {
+                direct_callees[0]
+            } else {
+                direct_callees[1]
+            };
+            let Some(pi_addr) =
+                u64::from_str_radix(pi_hex.trim_start_matches("0x"), 16).ok()
+            else {
+                break 'pi None;
+            };
+
+            // Get function info for the detected process_instruction.
+            if let ServerMode::Router(ref router) = self.mode {
+                match self
+                    .route_or_err(
+                        router,
+                        Some(handle),
+                        "function_at",
+                        json!({"address": pi_hex}),
+                    )
+                    .await
+                {
+                    Ok(r) if !r.is_error.unwrap_or(false) => r
+                        .content
+                        .first()
+                        .and_then(|c| match &c.raw {
+                            rmcp::model::RawContent::Text(t) => {
+                                serde_json::from_str::<serde_json::Value>(&t.text).ok()
+                            }
+                            _ => None,
+                        }),
+                    _ => None,
                 }
             } else {
-                None
+                self.worker
+                    .function_at(Some(pi_addr), None, 0)
+                    .await
+                    .ok()
+                    .map(|info| json!({
+                        "name": info.name,
+                        "address": info.address,
+                        "size": info.size,
+                    }))
             }
         };
 
@@ -883,6 +1020,9 @@ impl IdaMcpServer {
                     map.insert("compiled".to_string(), json!(compiled));
                     if let Some(ep) = entrypoint_json {
                         map.insert("entrypoint".to_string(), ep);
+                    }
+                    if let Some(pi) = process_instruction_json {
+                        map.insert("process_instruction".to_string(), pi);
                     }
                 }
                 text.text =
