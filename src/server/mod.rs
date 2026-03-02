@@ -3808,7 +3808,7 @@ impl IdaMcpServer {
     }
 
     #[tool(description = "Find instruction sequences by mnemonic")]
-    async fn find_insns(
+    async fn search_instructions(
         &self,
         Parameters(req): Parameters<FindInsnsRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -3817,7 +3817,7 @@ impl IdaMcpServer {
                 .route_or_err(
                     router,
                     req.db_handle.as_deref(),
-                    "find_insns",
+                    "search_instructions",
                     serde_json::to_value(&req).unwrap_or_default(),
                 )
                 .await;
@@ -3844,7 +3844,7 @@ impl IdaMcpServer {
     }
 
     #[tool(description = "Find instruction operands")]
-    async fn find_insn_operands(
+    async fn search_instruction_operands(
         &self,
         Parameters(req): Parameters<FindInsnOperandsRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -3853,7 +3853,7 @@ impl IdaMcpServer {
                 .route_or_err(
                     router,
                     req.db_handle.as_deref(),
-                    "find_insn_operands",
+                    "search_instruction_operands",
                     serde_json::to_value(&req).unwrap_or_default(),
                 )
                 .await;
@@ -4802,8 +4802,8 @@ fn tool_params_schema(name: &str) -> Option<Value> {
         "get_xrefs_to_string" => Some(schema::<XrefsToStringRequest>()),
         "search_bytes" => Some(schema::<FindBytesRequest>()),
         "search_text" => Some(schema::<SearchRequest>()),
-        "find_insns" => Some(schema::<FindInsnsRequest>()),
-        "find_insn_operands" => Some(schema::<FindInsnOperandsRequest>()),
+        "search_instructions" => Some(schema::<FindInsnsRequest>()),
+        "search_instruction_operands" => Some(schema::<FindInsnOperandsRequest>()),
         "list_segments" => Some(schema::<EmptyParams>()),
         "list_imports" | "list_exports" => Some(schema::<PaginatedRequest>()),
         "export_functions" => Some(schema::<ExportFuncsRequest>()),
@@ -5103,7 +5103,7 @@ impl<S: ServerHandler + Send + Sync> ServerHandler for SanitizedIdaServer<S> {
 
     async fn call_tool(
         &self,
-        params: CallToolRequestParams,
+        mut params: CallToolRequestParams,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         // Log raw arguments BEFORE rmcp's Parameters<T> deserialization.
@@ -5115,6 +5115,12 @@ impl<S: ServerHandler + Send + Sync> ServerHandler for SanitizedIdaServer<S> {
                 .unwrap_or_else(|_| "<unserializable>".to_string()),
             "call_tool raw"
         );
+
+        // Resolve backward-compatible aliases before routing (e.g. "idb_meta" → "get_database_info").
+        let primary = crate::tool_registry::primary_name_for(&params.name);
+        if primary != params.name.as_ref() {
+            params.name = primary.to_string().into();
+        }
 
         // Guard against unknown tool names. rmcp's ToolRouter may hang
         // indefinitely when dispatching a tool name that was never registered
