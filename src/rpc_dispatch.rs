@@ -4,12 +4,13 @@
 //! requests to the appropriate [`WorkerDispatch`] method, plus helpers.
 
 use crate::error::ToolError;
-use tracing::debug;
 use crate::ida::worker_trait::WorkerDispatch;
 use crate::router::protocol::RpcRequest;
 use crate::server::*;
+use crate::tool_registry::primary_name_for;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use tracing::debug;
 
 /// Parse a JSON value as a u64 address (supports numeric and hex-string forms).
 pub fn parse_address_value(v: &Value) -> Option<u64> {
@@ -93,8 +94,9 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
 ) -> Result<Value, ToolError> {
     let p = &req.params;
     debug!(method = %req.method, params = %p, "dispatch_rpc");
+    let method = primary_name_for(req.method.as_str());
 
-    match req.method.as_str() {
+    match method {
         // ── Database management ──────────────────────────────────────────
         "open" => {
             let path = p["path"].as_str().unwrap_or("").to_string();
@@ -140,7 +142,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let verbose = req.verbose.unwrap_or(false);
             worker.load_debug_info(path, verbose).await
         }
-        "analysis_status" => {
+        "get_analysis_status" => {
             let r = worker.analysis_status().await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
@@ -157,12 +159,12 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 .await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "resolve_function" => {
+        "get_function_by_name" => {
             let req: ResolveFunctionRequest = parse_params(p)?;
             let r = worker.resolve_function(&req.name).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "function_at" => {
+        "get_function_at_address" => {
             let req: FunctionAtRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -170,12 +172,12 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.function_at(addr, name, offset).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "lookup_funcs" => {
+        "batch_lookup_functions" => {
             let req: LookupFuncsRequest = parse_params(p)?;
             let queries = parse_string_list(&req.queries);
             worker.lookup_funcs(queries).await
         }
-        "export_funcs" => {
+        "export_functions" => {
             let req: ExportFuncsRequest = parse_params(p)?;
             let offset = req.offset.unwrap_or(0);
             let limit = req.limit.unwrap_or(100);
@@ -184,7 +186,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Disassembly / Decompilation ──────────────────────────────────
-        "disasm" => {
+        "disassemble" => {
             let req: DisasmRequest = parse_params(p)?;
             let addrs = parse_address_values(&req.address)?;
             let count = req.count.unwrap_or(10);
@@ -208,13 +210,13 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 Ok(json!({"results": results}))
             }
         }
-        "disasm_by_name" => {
+        "disassemble_function" => {
             let req: DisasmByNameRequest = parse_params(p)?;
             let count = req.count.unwrap_or(10);
             let r = worker.disasm_by_name(&req.name, count).await?;
             Ok(json!({"disasm": r}))
         }
-        "disasm_function_at" => {
+        "disassemble_function_at" => {
             let req: DisasmFunctionAtRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -223,7 +225,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.disasm_function_at(addr, name, offset, count).await?;
             Ok(json!({"disasm": r}))
         }
-        "decompile" => {
+        "decompile_function" => {
             let req: DecompileRequest = parse_params(p)?;
             let addrs = parse_address_values(&req.address)?;
             if addrs.len() == 1 {
@@ -246,7 +248,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 Ok(json!({"results": results}))
             }
         }
-        "pseudocode_at" => {
+        "get_pseudocode_at" => {
             let req: PseudocodeAtRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let end_addr = req
@@ -257,43 +259,34 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Segments ─────────────────────────────────────────────────────
-        "segments" => {
+        "list_segments" => {
             let r = worker.segments().await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
 
         // ── Strings ──────────────────────────────────────────────────────
-        "strings" => {
-            let req: StringsRequest = parse_params(p)?;
-            let offset = req.offset.unwrap_or(0);
-            let limit = req.limit.unwrap_or(100);
-            let filter = req.filter;
-            let timeout = req.timeout_secs;
-            let r = worker.strings(offset, limit, filter, timeout).await?;
-            Ok(serde_json::to_value(r).unwrap_or(json!(null)))
+        "list_strings" => {
+            let query: Option<String> = p["query"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| p["filter"].as_str().map(String::from));
+            let exact = p["exact"].as_bool().unwrap_or(false);
+            let case_insensitive = p["case_insensitive"].as_bool().unwrap_or(true);
+            let offset = p["offset"].as_u64().unwrap_or(0) as usize;
+            let limit = p["limit"].as_u64().unwrap_or(100) as usize;
+            let timeout = p["timeout_secs"].as_u64();
+
+            if let Some(q) = query {
+                let r = worker
+                    .find_string(q, exact, case_insensitive, offset, limit, timeout)
+                    .await?;
+                Ok(serde_json::to_value(r).unwrap_or(json!(null)))
+            } else {
+                let r = worker.strings(offset, limit, None, timeout).await?;
+                Ok(serde_json::to_value(r).unwrap_or(json!(null)))
+            }
         }
-        "find_string" => {
-            let req: FindStringRequest = parse_params(p)?;
-            let query = req.query;
-            let exact = req.exact.unwrap_or(false);
-            let case_insensitive = req.case_insensitive.unwrap_or(true);
-            let offset = req.offset.unwrap_or(0);
-            let limit = req.limit.unwrap_or(100);
-            let timeout = req.timeout_secs;
-            let r = worker
-                .find_string(query, exact, case_insensitive, offset, limit, timeout)
-                .await?;
-            Ok(serde_json::to_value(r).unwrap_or(json!(null)))
-        }
-        "analyze_strings" => {
-            let req: AnalyzeStringsRequest = parse_params(p)?;
-            let query = req.query;
-            let offset = req.offset.unwrap_or(0);
-            let limit = req.limit.unwrap_or(100);
-            let timeout = req.timeout_secs;
-            worker.analyze_strings(query, offset, limit, timeout).await
-        }
-        "xrefs_to_string" => {
+        "get_xrefs_to_string" => {
             let req: XrefsToStringRequest = parse_params(p)?;
             let query = req.query;
             let exact = req.exact.unwrap_or(false);
@@ -317,7 +310,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Types ────────────────────────────────────────────────────────
-        "local_types" => {
+        "list_local_types" => {
             let req: LocalTypesRequest = parse_params(p)?;
             let offset = req.offset.unwrap_or(0);
             let limit = req.limit.unwrap_or(100);
@@ -326,7 +319,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.local_types(offset, limit, filter, timeout).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "declare_type" => {
+        "declare_c_type" => {
             let req: DeclareTypeRequest = parse_params(p)?;
             let decl = req.decl;
             let relaxed = req.relaxed.unwrap_or(false);
@@ -334,7 +327,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let multi = req.multi.unwrap_or(false);
             worker.declare_type(decl, relaxed, replace, multi).await
         }
-        "apply_types" => {
+        "apply_type" => {
             let req: ApplyTypesRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -361,7 +354,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 )
                 .await
         }
-        "infer_types" => {
+        "infer_type" => {
             let req: InferTypesRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -371,7 +364,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Address info ─────────────────────────────────────────────────
-        "addr_info" => {
+        "get_address_info" => {
             let req: AddrInfoRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -381,7 +374,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Stack ────────────────────────────────────────────────────────
-        "declare_stack" => {
+        "create_stack_variable" => {
             let req: DeclareStackRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -394,7 +387,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 .await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "delete_stack" => {
+        "delete_stack_variable" => {
             let req: DeleteStackRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -403,7 +396,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.delete_stack(addr, name, offset, var_name).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "stack_frame" => {
+        "get_stack_frame" => {
             let req: AddressRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let r = worker.stack_frame(addr).await?;
@@ -411,7 +404,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Structs ──────────────────────────────────────────────────────
-        "structs" => {
+        "list_structs" => {
             let req: StructsRequest = parse_params(p)?;
             let offset = req.offset.unwrap_or(0);
             let limit = req.limit.unwrap_or(100);
@@ -420,14 +413,14 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let r = worker.structs(offset, limit, filter, timeout).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "struct_info" => {
+        "get_struct_info" => {
             let req: StructInfoRequest = parse_params(p)?;
             let ordinal = req.ordinal;
             let name = req.name;
             let r = worker.struct_info(ordinal, name).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!(null)))
         }
-        "read_struct" => {
+        "read_struct_at_address" => {
             let req: ReadStructRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let ordinal = req.ordinal;
@@ -437,19 +430,19 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Cross-references ─────────────────────────────────────────────
-        "xrefs_to" => {
+        "get_xrefs_to" => {
             let req: AddressRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let r = worker.xrefs_to(addr).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
-        "xrefs_from" => {
+        "get_xrefs_from" => {
             let req: AddressRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let r = worker.xrefs_from(addr).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
-        "xrefs_to_field" => {
+        "get_xrefs_to_struct_field" => {
             let req: XrefsToFieldRequest = parse_params(p)?;
             let ordinal = req.ordinal;
             let name = req.name;
@@ -463,14 +456,14 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Imports / Exports / Entrypoints ──────────────────────────────
-        "imports" => {
+        "list_imports" => {
             let req: PaginatedRequest = parse_params(p)?;
             let offset = req.offset.unwrap_or(0);
             let limit = req.limit.unwrap_or(100);
             let r = worker.imports(offset, limit).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
-        "exports" => {
+        "list_exports" => {
             let req: PaginatedRequest = parse_params(p)?;
             let offset = req.offset.unwrap_or(0);
             let limit = req.limit.unwrap_or(100);
@@ -483,7 +476,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Memory ───────────────────────────────────────────────────────
-        "get_bytes" => {
+        "read_bytes" => {
             let req: GetBytesRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -499,13 +492,13 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let size = p["size"].as_u64().unwrap_or(4) as usize;
             worker.read_int(addr, size).await
         }
-        "get_string" => {
+        "read_string" => {
             let req: GetStringRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let max_len = req.max_len.unwrap_or(1024);
             worker.get_string(addr, max_len).await
         }
-        "get_global_value" => {
+        "read_global_variable" => {
             let req: GetGlobalValueRequest = parse_params(p)?;
             let query = match req.query {
                 Value::String(s) => s,
@@ -516,7 +509,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Annotations ──────────────────────────────────────────────────
-        "set_comments" => {
+        "set_comment" => {
             let req: SetCommentsRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -527,7 +520,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 .set_comments(addr, name, offset, comment, repeatable)
                 .await
         }
-        "rename" => {
+        "rename_symbol" => {
             let req: RenameRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let current_name = req.current_name;
@@ -536,7 +529,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             worker.rename(addr, current_name, new_name, flags).await
         }
 
-        "rename_lvar" => {
+        "rename_local_variable" => {
             let req: RenameLvarRequest = parse_params(p)?;
             let func_addr = parse_address_value(&req.func_address).unwrap_or(0);
             worker
@@ -544,7 +537,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 .await
         }
 
-        "set_lvar_type" => {
+        "set_local_variable_type" => {
             let req: SetLvarTypeRequest = parse_params(p)?;
             let func_addr = parse_address_value(&req.func_address).unwrap_or(0);
             worker
@@ -571,7 +564,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let bytes = parse_patch_bytes(&req.bytes);
             worker.patch_bytes(addr, name, offset, bytes).await
         }
-        "patch_asm" => {
+        "patch_assembly" => {
             let req: PatchAsmRequest = parse_params(p)?;
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
@@ -581,25 +574,25 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Control / Call flow ──────────────────────────────────────────
-        "basic_blocks" => {
+        "get_basic_blocks" => {
             let req: AddressRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let r = worker.basic_blocks(addr).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
-        "callees" => {
+        "get_callees" => {
             let req: AddressRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let r = worker.callees(addr).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
-        "callers" => {
+        "get_callers" => {
             let req: AddressRequest = parse_params(p)?;
             let addr = parse_address_value(&req.address).unwrap_or(0);
             let r = worker.callers(addr).await?;
             Ok(serde_json::to_value(r).unwrap_or(json!([])))
         }
-        "callgraph" => {
+        "build_callgraph" => {
             let req: CallGraphRequest = parse_params(p)?;
             let addr = req
                 .roots
@@ -612,7 +605,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let max_nodes = req.max_nodes.unwrap_or(100);
             worker.callgraph(addr, max_depth, max_nodes).await
         }
-        "find_paths" => {
+        "find_control_flow_paths" => {
             let req: FindPathsRequest = parse_params(p)?;
             let start = parse_address_value(&req.start).unwrap_or(0);
             let end = parse_address_value(&req.end).unwrap_or(0);
@@ -620,7 +613,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let max_depth = req.max_depth.unwrap_or(10);
             worker.find_paths(start, end, max_paths, max_depth).await
         }
-        "xref_matrix" => {
+        "build_xref_matrix" => {
             let req: XrefMatrixRequest = parse_params(p)?;
             let addrs = req
                 .addrs
@@ -631,7 +624,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Metadata ─────────────────────────────────────────────────────
-        "idb_meta" => worker.idb_meta().await,
+        "get_database_info" => worker.idb_meta().await,
 
         // ── Globals ──────────────────────────────────────────────────────
         "list_globals" => {
@@ -644,14 +637,14 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
         }
 
         // ── Analysis ─────────────────────────────────────────────────────
-        "analyze_funcs" => {
+        "run_auto_analysis" => {
             let req: AnalyzeFuncsRequest = parse_params(p)?;
             let timeout = req.timeout_secs;
             worker.analyze_funcs(timeout).await
         }
 
         // ── Search ───────────────────────────────────────────────────────
-        "find_bytes" => {
+        "search_bytes" => {
             let req: FindBytesRequest = parse_params(p)?;
             let patterns: Vec<String> = if let Some(arr) = req.patterns.as_array() {
                 arr.iter()
@@ -710,7 +703,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let timeout = p["timeout_secs"].as_u64();
             worker.search_imm(imm, max_results, timeout).await
         }
-        "find_insns" => {
+        "search_instructions" => {
             let req: FindInsnsRequest = parse_params(p)?;
             let patterns: Vec<String> = if let Some(arr) = req.patterns.as_array() {
                 arr.iter()
@@ -738,7 +731,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
                 .find_insns(patterns, max_results, case_insensitive, timeout)
                 .await
         }
-        "find_insn_operands" => {
+        "search_instruction_operands" => {
             let req: FindInsnOperandsRequest = parse_params(p)?;
             let patterns: Vec<String> = if let Some(arr) = req.patterns.as_array() {
                 arr.iter()
@@ -846,7 +839,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             }))
         }
 
-        "table_scan" => {
+        "scan_memory_table" => {
             let req: TableScanRequest = parse_params(p)?;
             let base_addr = crate::rpc_dispatch::parse_address_value(&req.base_address)
                 .ok_or_else(|| ToolError::InvalidParams("base_address is required".to_string()))?;
@@ -883,7 +876,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             }))
         }
 
-        "diff_functions" => {
+        "diff_pseudocode" => {
             let req: DiffFunctionsRequest = parse_params(p)?;
             let addr1 = crate::rpc_dispatch::parse_address_value(&req.addr1)
                 .ok_or_else(|| ToolError::InvalidParams("addr1 is required".to_string()))?;
@@ -1646,9 +1639,12 @@ pub mod mock {
             lvar_name: String,
             new_name: String,
         ) -> Result<Value, ToolError> {
-            self.record("rename_lvar", json!({
-                "func_addr": func_addr, "lvar_name": lvar_name, "new_name": new_name,
-            }));
+            self.record(
+                "rename_lvar",
+                json!({
+                    "func_addr": func_addr, "lvar_name": lvar_name, "new_name": new_name,
+                }),
+            );
             Ok(json!({}))
         }
 
@@ -1658,9 +1654,12 @@ pub mod mock {
             lvar_name: String,
             type_str: String,
         ) -> Result<Value, ToolError> {
-            self.record("set_lvar_type", json!({
-                "func_addr": func_addr, "lvar_name": lvar_name, "type_str": type_str,
-            }));
+            self.record(
+                "set_lvar_type",
+                json!({
+                    "func_addr": func_addr, "lvar_name": lvar_name, "type_str": type_str,
+                }),
+            );
             Ok(json!({}))
         }
 
@@ -1671,9 +1670,12 @@ pub mod mock {
             itp: i32,
             comment: String,
         ) -> Result<Value, ToolError> {
-            self.record("set_decompiler_comment", json!({
-                "func_addr": func_addr, "addr": addr, "itp": itp, "comment": comment,
-            }));
+            self.record(
+                "set_decompiler_comment",
+                json!({
+                    "func_addr": func_addr, "addr": addr, "itp": itp, "comment": comment,
+                }),
+            );
             Ok(json!({}))
         }
 
@@ -2025,7 +2027,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_bytes_hex_string_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "get_bytes", json!({"addr": "0x5e8", "size": 16}));
+        let req = RpcRequest::new("1", "read_bytes", json!({"addr": "0x5e8", "size": 16}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2037,7 +2039,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_bytes_decimal_string_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "get_bytes", json!({"addr": "1512", "size": 8}));
+        let req = RpcRequest::new("1", "read_bytes", json!({"addr": "1512", "size": 8}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2049,7 +2051,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_bytes_numeric_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "get_bytes", json!({"addr": 0x5e8u64, "size": 4}));
+        let req = RpcRequest::new("1", "read_bytes", json!({"addr": 0x5e8u64, "size": 4}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2061,7 +2063,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_bytes_single_string_pattern() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_bytes", json!({"pattern": "FD 7B"}));
+        let req = RpcRequest::new("1", "search_bytes", json!({"pattern": "FD 7B"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2074,7 +2076,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_bytes_array_pattern() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_bytes", json!({"pattern": ["FD 7B", "90 90"]}));
+        let req = RpcRequest::new("1", "search_bytes", json!({"pattern": ["FD 7B", "90 90"]}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2089,7 +2091,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_bytes_json_array_string_pattern() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_bytes", json!({"pattern": r#"["FD 7B"]"#}));
+        let req = RpcRequest::new("1", "search_bytes", json!({"pattern": r#"["FD 7B"]"#}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2102,7 +2104,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_insns_single_string_pattern() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_insns", json!({"patterns": "bl"}));
+        let req = RpcRequest::new("1", "search_instructions", json!({"patterns": "bl"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2115,7 +2117,11 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_insns_array_pattern() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_insns", json!({"patterns": ["bl", "mov"]}));
+        let req = RpcRequest::new(
+            "1",
+            "search_instructions",
+            json!({"patterns": ["bl", "mov"]}),
+        );
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2128,7 +2134,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_insns_json_array_string() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_insns", json!({"patterns": r#"["bl"]"#}));
+        let req = RpcRequest::new("1", "search_instructions", json!({"patterns": r#"["bl"]"#}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2141,7 +2147,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_decompile_hex_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "decompile", json!({"address": "0x100015a98"}));
+        let req = RpcRequest::new("1", "decompile_function", json!({"address": "0x100015a98"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2154,7 +2160,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_decompile_numeric_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "decompile", json!({"address": 4096u64}));
+        let req = RpcRequest::new("1", "decompile_function", json!({"address": 4096u64}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2173,7 +2179,7 @@ mod tests {
         let mock = MockWorker::new();
         let req = RpcRequest::new(
             "1",
-            "decompile",
+            "decompile_function",
             json!({"address": ["0x100000328", "0x100000340"]}),
         );
 
@@ -2191,7 +2197,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_xrefs_to_hex_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "xrefs_to", json!({"address": "0x1000"}));
+        let req = RpcRequest::new("1", "get_xrefs_to", json!({"address": "0x1000"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2217,9 +2223,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_alias_resolution() {
+        let mock = MockWorker::new();
+        let req = RpcRequest::new("1", "disasm", json!({"address": "0x1000", "count": 5}));
+
+        let result = dispatch_rpc(&req, &mock).await;
+        assert!(
+            result.is_ok(),
+            "Old alias 'disasm' should dispatch correctly"
+        );
+    }
+
+    #[tokio::test]
     async fn test_dispatch_find_bytes_empty_pattern_returns_empty() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_bytes", json!({"pattern": null}));
+        let req = RpcRequest::new("1", "search_bytes", json!({"pattern": null}));
 
         let result = dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2231,7 +2249,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_get_bytes_default_size() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "get_bytes", json!({"addr": "0x1000"}));
+        let req = RpcRequest::new("1", "read_bytes", json!({"addr": "0x1000"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2357,7 +2375,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_table_scan_default_stride_count() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "table_scan", json!({"base_address": 0x2000u64}));
+        let req = RpcRequest::new("1", "scan_memory_table", json!({"base_address": 0x2000u64}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2572,7 +2590,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_infer_types_by_address() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "infer_types", json!({"address": "0x6000"}));
+        let req = RpcRequest::new("1", "infer_type", json!({"address": "0x6000"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2622,7 +2640,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_basic_blocks() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "basic_blocks", json!({"address": "0x1000"}));
+        let req = RpcRequest::new("1", "get_basic_blocks", json!({"address": "0x1000"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2635,7 +2653,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_callers() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "callers", json!({"address": "0x1000"}));
+        let req = RpcRequest::new("1", "get_callers", json!({"address": "0x1000"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2648,7 +2666,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_callees() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "callees", json!({"address": "0x1000"}));
+        let req = RpcRequest::new("1", "get_callees", json!({"address": "0x1000"}));
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2716,7 +2734,11 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_find_insn_operands() {
         let mock = MockWorker::new();
-        let req = RpcRequest::new("1", "find_insn_operands", json!({"patterns": "rax"}));
+        let req = RpcRequest::new(
+            "1",
+            "search_instruction_operands",
+            json!({"patterns": "rax"}),
+        );
 
         dispatch_rpc(&req, &mock).await.unwrap();
 
@@ -2780,7 +2802,7 @@ mod tests {
         assert_eq!(calls[0].0, "set_decompiler_comment");
         assert_eq!(calls[0].1["func_addr"], 0x3000u64);
         assert_eq!(calls[0].1["addr"], 0x3010u64);
-        assert_eq!(calls[0].1["itp"], 69);  // default ITP_SEMI
+        assert_eq!(calls[0].1["itp"], 69); // default ITP_SEMI
         assert_eq!(calls[0].1["comment"], "loop start");
     }
 
@@ -2798,7 +2820,7 @@ mod tests {
         let calls = mock.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "set_decompiler_comment");
-        assert_eq!(calls[0].1["itp"], 74);  // ITP_BLOCK1
+        assert_eq!(calls[0].1["itp"], 74); // ITP_BLOCK1
         assert_eq!(calls[0].1["comment"], "block");
     }
 }
