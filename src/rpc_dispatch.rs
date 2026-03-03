@@ -63,28 +63,64 @@ fn parse_string_list(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn parse_patch_bytes(v: &Value) -> Vec<u8> {
+fn parse_patch_bytes(v: &Value) -> Result<Vec<u8>, ToolError> {
     if let Some(arr) = v.as_array() {
-        return arr
+        let out: Vec<u8> = arr
             .iter()
             .filter_map(|item| item.as_u64().map(|n| n as u8))
             .collect();
+        if out.is_empty() {
+            return Err(ToolError::InvalidParams("no bytes provided".to_string()));
+        }
+        return Ok(out);
     }
-    if let Some(hex_str) = v.as_str() {
-        return hex_str
-            .split_whitespace()
-            .filter_map(|s| {
-                u8::from_str_radix(
-                    s.strip_prefix("0x")
-                        .or_else(|| s.strip_prefix("0X"))
-                        .unwrap_or(s),
-                    16,
-                )
-                .ok()
-            })
+    if let Some(s) = v.as_str() {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err(ToolError::InvalidParams("no bytes provided".to_string()));
+        }
+        // Split by common separators (whitespace, comma, colon, dash, underscore)
+        let tokens: Vec<&str> = s
+            .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ':' | '-' | '_'))
+            .filter(|t| !t.is_empty())
             .collect();
+
+        let mut hex_str = String::with_capacity(s.len());
+        for token in &tokens {
+            // Strip 0x/0X prefix from each token
+            let cleaned = token
+                .strip_prefix("0x")
+                .or_else(|| token.strip_prefix("0X"))
+                .unwrap_or(token);
+            for c in cleaned.chars() {
+                if !c.is_ascii_hexdigit() {
+                    return Err(ToolError::InvalidParams(format!(
+                        "invalid hex character: {c}"
+                    )));
+                }
+            }
+            hex_str.push_str(cleaned);
+        }
+
+        if hex_str.is_empty() {
+            return Err(ToolError::InvalidParams("no bytes provided".to_string()));
+        }
+        if hex_str.len() % 2 != 0 {
+            return Err(ToolError::InvalidParams(
+                "hex string has odd length".to_string(),
+            ));
+        }
+        let mut out = Vec::with_capacity(hex_str.len() / 2);
+        for i in (0..hex_str.len()).step_by(2) {
+            let byte = u8::from_str_radix(&hex_str[i..i + 2], 16)
+                .map_err(|_| ToolError::InvalidParams("invalid hex byte".to_string()))?;
+            out.push(byte);
+        }
+        return Ok(out);
     }
-    Vec::new()
+    Err(ToolError::InvalidParams(
+        "bytes must be a hex string or array of integers".to_string(),
+    ))
 }
 
 /// Dispatch a JSON-RPC request to the appropriate worker method.
@@ -618,7 +654,7 @@ pub async fn dispatch_rpc<W: WorkerDispatch>(
             let addr = req.address.as_ref().and_then(parse_address_value);
             let name = req.target_name;
             let offset = req.offset.unwrap_or(0);
-            let bytes = parse_patch_bytes(&req.bytes);
+            let bytes = parse_patch_bytes(&req.bytes)?;
             worker.patch_bytes(addr, name, offset, bytes).await
         }
         "patch_assembly" => {

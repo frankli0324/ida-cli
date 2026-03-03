@@ -243,33 +243,46 @@ impl IdaMcpServer {
     fn value_to_bytes(value: &Value) -> Result<Vec<u8>, ToolError> {
         match value {
             Value::String(s) => {
-                let mut cleaned = String::with_capacity(s.len());
-                for c in s.chars() {
-                    if c.is_ascii_hexdigit() {
-                        cleaned.push(c);
-                    } else if c.is_ascii_whitespace()
-                        || matches!(c, ',' | '_' | ':' | '-')
-                        || c == 'x'
-                        || c == 'X'
-                    {
-                        continue;
-                    } else {
-                        return Err(ToolError::InvalidParams(format!(
-                            "invalid hex character: {c}"
-                        )));
-                    }
-                }
-                if cleaned.is_empty() {
+                let s = s.trim();
+                if s.is_empty() {
                     return Err(ToolError::InvalidParams("no bytes provided".to_string()));
                 }
-                if !cleaned.len().is_multiple_of(2) {
+
+                // Split by common separators (whitespace, comma, colon, dash, underscore)
+                let tokens: Vec<&str> = s
+                    .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ':' | '-' | '_'))
+                    .filter(|t| !t.is_empty())
+                    .collect();
+
+                let mut hex_str = String::with_capacity(s.len());
+                for token in &tokens {
+                    // Strip 0x/0X prefix from each token
+                    let cleaned = token
+                        .strip_prefix("0x")
+                        .or_else(|| token.strip_prefix("0X"))
+                        .unwrap_or(token);
+                    // Validate all remaining chars are hex digits
+                    for c in cleaned.chars() {
+                        if !c.is_ascii_hexdigit() {
+                            return Err(ToolError::InvalidParams(format!(
+                                "invalid hex character: {c}"
+                            )));
+                        }
+                    }
+                    hex_str.push_str(cleaned);
+                }
+
+                if hex_str.is_empty() {
+                    return Err(ToolError::InvalidParams("no bytes provided".to_string()));
+                }
+                if hex_str.len() % 2 != 0 {
                     return Err(ToolError::InvalidParams(
                         "hex string has odd length".to_string(),
                     ));
                 }
-                let mut out = Vec::with_capacity(cleaned.len() / 2);
-                for i in (0..cleaned.len()).step_by(2) {
-                    let byte = u8::from_str_radix(&cleaned[i..i + 2], 16)
+                let mut out = Vec::with_capacity(hex_str.len() / 2);
+                for i in (0..hex_str.len()).step_by(2) {
+                    let byte = u8::from_str_radix(&hex_str[i..i + 2], 16)
                         .map_err(|_| ToolError::InvalidParams("invalid hex byte".to_string()))?;
                     out.push(byte);
                 }
