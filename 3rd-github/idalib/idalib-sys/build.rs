@@ -228,8 +228,58 @@ fn main() {
 
     println!("cargo::metadata=sdk={}", sdk_path.display());
 
+    // Track changes to source files that affect compilation
+    // Primary FFI entry point
     println!(
         "cargo::rerun-if-changed={}",
         ffi_path.join("lib.rs").display()
     );
+
+    // Track all header files in src/ (extras and core definitions)
+    let header_files = [
+        "auto_extras.h",
+        "bookmarks_extras.h",
+        "bytes_extras.h",
+        "comments_extras.h",
+        "entry_extras.h",
+        "expr_extras.h",
+        "fixups.h",
+        "frame_extras.h",
+        "func_extras.h",
+        "hexrays_extras.h",
+        "idalib_extras.h",
+        "inf_extras.h",
+        "kernwin_extras.h",
+        "lines_extras.h",
+        "loader_extras.h",
+        "nalt_extras.h",
+        "ph_extras.h",
+        "search_extras.h",
+        "segm_extras.h",
+        "strings_extras.h",
+        "types.h",
+        "udt_extras.h",
+    ];
+
+    for header in &header_files {
+        println!(
+            "cargo::rerun-if-changed={}",
+            ffi_path.join(header).display()
+        );
+    }
+
+    // Track all C++ implementation files in src/
+    let cc_files = [
+        "expr_extras.cc",
+        "frame_extras.cc",
+        "types_extras.cc",
+        "udt_extras.cc",
+    ];
+
+    for cc_file in &cc_files {
+        println!(
+            "cargo::rerun-if-changed={}",
+            ffi_path.join(cc_file).display()
+        );
+    }
 }

@@ -1,14 +1,24 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex};
 use tokio::process::Command;
-use tokio::sync::{oneshot, OnceCell};
+use tokio::sync::{oneshot, Mutex as TokioMutex, OnceCell};
 
 const ADDR_ADD: &str = "0x100000328";
 const ADDR_MAIN: &str = "0x100000348";
+
+/// Global mutex to serialize all e2e tests.
+///
+/// All tests share a single IDA worker process (via `OnceCell<WorkerClient>`)
+/// whose internal loop processes requests sequentially. Multi-step tests like
+/// `rename → set_type` require their requests to execute without interleaving
+/// from other tests. Without serialization, concurrent tests can corrupt each
+/// other's assumptions about IDA's cfunc cache state.
+static IDA_SERIAL: TokioMutex<()> = TokioMutex::const_new(());
 
 fn ida_available() -> bool {
     std::env::var("IDA_TEST").map(|v| v == "1").unwrap_or(false)
@@ -198,10 +208,46 @@ async fn client() -> &'static WorkerClient {
             let c = spawn_worker().await;
             let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test/fixtures/mini.i64");
 
+            // Create isolated temporary copy of fixture to avoid state mutation across test runs
+            let temp_dir = std::env::temp_dir();
+            let temp_fixture = temp_dir.join(format!("mini_e2e_{}.i64", std::process::id()));
+
+            // Copy fixture and all associated IDA database files
+            let fixture_dir = fixture.parent().expect("fixture should have parent dir");
+            let fixture_stem = fixture.file_stem().expect("fixture should have stem");
+
+            for entry in fs::read_dir(fixture_dir).expect("failed to read fixture dir") {
+                let entry = entry.expect("failed to read dir entry");
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                if let Some(file_name) = path.file_name() {
+                    let file_name_str = file_name.to_string_lossy();
+                    if let Some(stem) = path.file_stem() {
+                        if stem == fixture_stem {
+                            // Skip lock files to avoid stale lock propagation
+                            if file_name_str.ends_with(".imcp") {
+                                continue;
+                            }
+                            let temp_file = temp_dir.join(file_name_str.as_ref().replace(
+                                &fixture_stem.to_string_lossy().to_string(),
+                                &format!("mini_e2e_{}", std::process::id()),
+                            ));
+                            fs::copy(&path, &temp_file).expect(&format!(
+                                "failed to copy fixture file {} to {}",
+                                path.display(),
+                                temp_file.display()
+                            ));
+                        }
+                    }
+                }
+            }
+
             c.call(
                 "open",
                 json!({
-                    "path": fixture.to_string_lossy().to_string(),
+                    "path": temp_fixture.to_string_lossy().to_string(),
                     "force": true,
                 }),
             )
@@ -593,6 +639,7 @@ async fn test_e2e_open_and_database_basics() {
     if !ida_available() {
         return;
     }
+    let _guard = IDA_SERIAL.lock().await;
 
     let c = client().await;
     c.ensure_running().await.expect("worker should be running");
@@ -637,6 +684,7 @@ async fn test_e2e_patch_bytes_then_read_back() {
     if !ida_available() {
         return;
     }
+    let _guard = IDA_SERIAL.lock().await;
 
     let c = client().await;
 
@@ -685,6 +733,7 @@ async fn test_e2e_rename_then_set_type_lvar() {
     if !ida_available() {
         return;
     }
+    let _guard = IDA_SERIAL.lock().await;
 
     let c = client().await;
 
@@ -696,7 +745,11 @@ async fn test_e2e_rename_then_set_type_lvar() {
     assert!(!code.is_empty(), "decompiled code should not be empty");
 
     let lvar_name = extract_first_param_name(code).unwrap_or_else(|| "a1".to_string());
-    let renamed = "e2e_arg";
+    let renamed = if lvar_name == "e2e_arg" {
+        "e2e_arg_2".to_string()
+    } else {
+        "e2e_arg".to_string()
+    };
 
     let rename_result = c
         .call(
@@ -731,6 +784,18 @@ async fn test_e2e_rename_then_set_type_lvar() {
         "set_local_variable_type should succeed after rename: {:?}",
         type_result.err()
     );
+
+    // Verify rename by re-decompiling and checking renamed variable appears in pseudocode
+    let decomp_after = c
+        .call("decompile_function", json!({"address": ADDR_ADD}))
+        .await
+        .expect("decompile_function after rename failed");
+    let code_after = decomp_after["code"].as_str().unwrap_or_default();
+    assert!(
+        code_after.contains(&renamed),
+        "renamed variable '{}' should appear in decompiled pseudocode after rename",
+        renamed
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -738,6 +803,7 @@ async fn test_e2e_smoke_dispatch_methods() {
     if !ida_available() {
         return;
     }
+    let _guard = IDA_SERIAL.lock().await;
 
     let c = client().await;
 

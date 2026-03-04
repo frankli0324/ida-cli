@@ -182,16 +182,18 @@ bool idalib_hexrays_cfunc_get_stmt_bounds(cfunc_t *f, const cinsn_t *insn,
 #include "funcs.hpp"
 #include "typeinf.hpp"
 
-/// Rename a local variable in a decompiled function using the SDK helper.
+/// Rename a local variable in a decompiled function.
 bool idalib_hexrays_rename_lvar(ea_t func_ea, const char* old_name, const char* new_name) {
-    // Flush stale decompiler cache so locate_lvar() (called internally by ::rename_lvar)
-    // can find variables by their current names in user_lvar_settings
     func_t* func = get_func(func_ea);
     if (!func) return false;
     hexrays_failure_t failure;
     cfuncptr_t cf = decompile_func(func, &failure, DECOMP_NO_WAIT | DECOMP_NO_CACHE);
     if (!cf) return false;
-    return ::rename_lvar(func_ea, old_name, new_name);
+    lvar_saved_info_t info;
+    if (!locate_lvar(&info.ll, func_ea, old_name))
+        return false;
+    info.name = new_name;
+    return modify_user_lvar_info(func_ea, MLI_NAME, info);
 }
 
 /// Set the type of a local variable. Parses type_str as a C declaration.
