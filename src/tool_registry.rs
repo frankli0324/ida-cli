@@ -1274,6 +1274,271 @@ pub static TOOL_REGISTRY: &[ToolInfo] = &[
         keywords: &["script", "python", "execute", "eval", "idapython", "run", "code", "file"],
         aliases: &[],
     },
+
+    // === DEBUG TOOLS ===
+    ToolInfo {
+        name: "dbg_load_debugger",
+        category: ToolCategory::Debug,
+        short_desc: "Load a debugger module for the current binary",
+        full_desc: "Load a debugger module (e.g. 'mac', 'linux', 'gdb', 'win32'). Must be called \
+                    before starting or attaching to a debug session. Automatically disables exception \
+                    dialogs for headless operation via set_debugger_options(0).",
+        example: r#"{"debugger_name": "mac"}"#,
+        default: false,
+        keywords: &["debug", "debugger", "load", "attach", "mac", "linux", "gdb"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_start_process",
+        category: ToolCategory::Debug,
+        short_desc: "Start the target process under the debugger",
+        full_desc: "Launch the target binary under the IDA debugger. Auto-loads the native debugger \
+                    if not already loaded. Waits for the first suspension event (breakpoint or \
+                    exception) before returning. Returns IP, event code, and process state.",
+        example: r#"{"path": "/usr/bin/ls", "args": "-la /tmp"}"#,
+        default: false,
+        keywords: &["debug", "process", "start", "launch", "run", "execute"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_attach_process",
+        category: ToolCategory::Debug,
+        short_desc: "Attach the debugger to a running process by PID",
+        full_desc: "Attach IDA's debugger to an already-running process identified by PID. \
+                    Waits for the process to suspend after attachment.",
+        example: r#"{"pid": 1234}"#,
+        default: false,
+        keywords: &["debug", "process", "attach", "pid", "running"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_detach_process",
+        category: ToolCategory::Debug,
+        short_desc: "Detach the debugger without killing the process",
+        full_desc: "Detach IDA's debugger from the current process, leaving the process running \
+                    independently. The debug session ends but the process continues.",
+        example: r#"{}"#,
+        default: false,
+        keywords: &["debug", "process", "detach", "stop", "disconnect"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_exit_process",
+        category: ToolCategory::Debug,
+        short_desc: "Terminate the debugged process",
+        full_desc: "Forcibly terminate the process currently being debugged and end the debug session.",
+        example: r#"{}"#,
+        default: false,
+        keywords: &["debug", "process", "exit", "kill", "terminate", "stop"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_get_state",
+        category: ToolCategory::Debug,
+        short_desc: "Get current debugger and process state",
+        full_desc: "Query the current debugger state: DSTATE_NOTASK (no process), DSTATE_RUN \
+                    (running), or DSTATE_SUSP (suspended at breakpoint). When suspended, also \
+                    returns IP, SP, and current thread.",
+        example: r#"{}"#,
+        default: false,
+        keywords: &["debug", "state", "status", "process", "running", "suspended"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_add_breakpoint",
+        category: ToolCategory::Debug,
+        short_desc: "Set a breakpoint at an address",
+        full_desc: "Add a software, execution, or memory access breakpoint at the given address. \
+                    Breakpoint types: 'soft' (software, default), 'exec' (hardware execution), \
+                    'write' (hardware write watchpoint), 'read' (hardware read watchpoint), \
+                    'rdwr' (hardware read/write watchpoint). Optional condition expression supported.",
+        example: r#"{"address": "0x100001234", "bpt_type": "soft"}"#,
+        default: false,
+        keywords: &["debug", "breakpoint", "bpt", "break", "software", "hardware", "watchpoint", "set"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_del_breakpoint",
+        category: ToolCategory::Debug,
+        short_desc: "Delete a breakpoint at an address",
+        full_desc: "Remove an existing breakpoint at the given address from the IDA database.",
+        example: r#"{"address": "0x100001234"}"#,
+        default: false,
+        keywords: &["debug", "breakpoint", "bpt", "delete", "remove", "clear"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_enable_breakpoint",
+        category: ToolCategory::Debug,
+        short_desc: "Enable or disable a breakpoint",
+        full_desc: "Toggle a breakpoint on or off without deleting it. Useful for temporarily \
+                    disabling breakpoints without losing their configuration.",
+        example: r#"{"address": "0x100001234", "enable": false}"#,
+        default: false,
+        keywords: &["debug", "breakpoint", "bpt", "enable", "disable", "toggle"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_list_breakpoints",
+        category: ToolCategory::Debug,
+        short_desc: "List all breakpoints in the database",
+        full_desc: "Enumerate all breakpoints currently defined in the IDA database, including \
+                    their address, type, size, enabled status, and optional condition.",
+        example: r#"{}"#,
+        default: false,
+        keywords: &["debug", "breakpoint", "bpt", "list", "enumerate", "show"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_continue",
+        category: ToolCategory::Debug,
+        short_desc: "Continue execution until the next debug event",
+        full_desc: "Resume execution of the suspended process and wait for the next breakpoint hit, \
+                    exception, or other debug event. Returns event code, new IP, and process state. \
+                    Process must be in DSTATE_SUSP state.",
+        example: r#"{"timeout_secs": 30}"#,
+        default: false,
+        keywords: &["debug", "continue", "resume", "run", "execute", "go"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_step_into",
+        category: ToolCategory::Debug,
+        short_desc: "Single-step into the next instruction (follows calls)",
+        full_desc: "Execute exactly one instruction, following call instructions into callees. \
+                    Returns the new IP after stepping. Process must be in DSTATE_SUSP state.",
+        example: r#"{"timeout_secs": 5}"#,
+        default: false,
+        keywords: &["debug", "step", "into", "single", "instruction", "trace"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_step_over",
+        category: ToolCategory::Debug,
+        short_desc: "Single-step over the next instruction (skips calls)",
+        full_desc: "Execute exactly one instruction, treating calls as single steps (does not \
+                    follow into callees). Returns the new IP after stepping. Process must be \
+                    in DSTATE_SUSP state.",
+        example: r#"{"timeout_secs": 5}"#,
+        default: false,
+        keywords: &["debug", "step", "over", "next", "instruction", "skip"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_step_until_ret",
+        category: ToolCategory::Debug,
+        short_desc: "Step until the current function returns",
+        full_desc: "Continue stepping until the current function executes a return instruction. \
+                    Useful for quickly exiting a function during debugging. Process must be suspended.",
+        example: r#"{"timeout_secs": 60}"#,
+        default: false,
+        keywords: &["debug", "step", "return", "ret", "finish", "until", "out"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_run_to",
+        category: ToolCategory::Debug,
+        short_desc: "Run to a specific address",
+        full_desc: "Continue execution and stop when the given address is reached. Sets a \
+                    temporary breakpoint at the target address, continues, then removes it. \
+                    Process must be in DSTATE_SUSP state.",
+        example: r#"{"address": "0x100001500", "timeout_secs": 30}"#,
+        default: false,
+        keywords: &["debug", "run", "to", "goto", "reach", "cursor", "until"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_get_registers",
+        category: ToolCategory::Debug,
+        short_desc: "Read register values from the suspended process",
+        full_desc: "Read the current values of all or selected CPU registers from the suspended \
+                    process. Returns register values as hex strings plus IP and SP. \
+                    Process must be in DSTATE_SUSP state.",
+        example: r#"{"register_names": ["rax", "rbx", "rip", "rsp"]}"#,
+        default: false,
+        keywords: &["debug", "register", "reg", "ip", "sp", "pc", "value", "read", "cpu"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_set_register",
+        category: ToolCategory::Debug,
+        short_desc: "Set a CPU register value in the suspended process",
+        full_desc: "Write a new value to a CPU register in the suspended process. Accepts hex \
+                    (0x...) or decimal values. Process must be in DSTATE_SUSP state.",
+        example: r#"{"register_name": "rax", "value": "0x1234"}"#,
+        default: false,
+        keywords: &["debug", "register", "reg", "set", "write", "modify", "patch"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_read_memory",
+        category: ToolCategory::Debug,
+        short_desc: "Read bytes from the debugged process memory",
+        full_desc: "Read up to 4096 bytes from the suspended process's memory at the given address. \
+                    Returns hex-encoded bytes and ASCII representation. \
+                    Process must be in DSTATE_SUSP state.",
+        example: r#"{"address": "0x100001000", "size": 64}"#,
+        default: false,
+        keywords: &["debug", "memory", "read", "dump", "hex", "bytes", "inspect"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_write_memory",
+        category: ToolCategory::Debug,
+        short_desc: "Write bytes to the debugged process memory",
+        full_desc: "Patch memory in the suspended process at runtime. Data is provided as a \
+                    hex string (e.g. '4889c7' or '48 89 c7'). Process must be in DSTATE_SUSP state.",
+        example: r#"{"address": "0x100001000", "data": "90909090"}"#,
+        default: false,
+        keywords: &["debug", "memory", "write", "patch", "modify", "bytes", "inject"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_get_memory_info",
+        category: ToolCategory::Debug,
+        short_desc: "List memory regions of the debugged process",
+        full_desc: "Enumerate all mapped memory regions in the debugged process, including \
+                    start/end addresses, region names, permissions (rwx), and segment class.",
+        example: r#"{}"#,
+        default: false,
+        keywords: &["debug", "memory", "map", "regions", "segments", "info", "layout"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_list_threads",
+        category: ToolCategory::Debug,
+        short_desc: "List all threads in the debugged process",
+        full_desc: "Enumerate all threads in the currently debugged process, with their \
+                    thread IDs, names, and indices. Also shows the current active thread.",
+        example: r#"{}"#,
+        default: false,
+        keywords: &["debug", "thread", "list", "enumerate", "tls", "concurrent"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_select_thread",
+        category: ToolCategory::Debug,
+        short_desc: "Select a thread as the current debugging context",
+        full_desc: "Switch the active debugging context to a specific thread by its thread ID. \
+                    Subsequent register reads and memory inspections use this thread's context. \
+                    Process must be in DSTATE_SUSP state.",
+        example: r#"{"thread_id": 12345}"#,
+        default: false,
+        keywords: &["debug", "thread", "select", "switch", "context", "focus"],
+        aliases: &[],
+    },
+    ToolInfo {
+        name: "dbg_wait_event",
+        category: ToolCategory::Debug,
+        short_desc: "Wait for the next debug event",
+        full_desc: "Block until the next debug event occurs (breakpoint hit, exception, \
+                    library load, process exit, etc.). Returns the event code, type, and new \
+                    process state. Always includes WFNE_SILENT for headless safety.",
+        example: r#"{"timeout_secs": 10}"#,
+        default: false,
+        keywords: &["debug", "event", "wait", "notification", "breakpoint", "exception", "trap"],
+        aliases: &[],
+    },
 ];
 
 /// Get tools in the default (core) set

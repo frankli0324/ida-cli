@@ -546,6 +546,41 @@ impl IdaMcpServer {
         }
     }
 
+    async fn run_debug_script(
+        &self,
+        db_handle: Option<&str>,
+        tool_name: &str,
+        script: &str,
+        timeout_secs: u64,
+        route_args: Value,
+    ) -> Result<CallToolResult, McpError> {
+        if let ServerMode::Router(ref router) = self.mode {
+            return self
+                .route_or_err(router, db_handle, tool_name, route_args)
+                .await;
+        }
+
+        match self.worker.run_script(script, Some(timeout_secs)).await {
+            Ok(result) => match crate::ida::handlers::debug::parse_debug_output(&result) {
+                Ok(data) => Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&data).unwrap_or_default(),
+                )])),
+                Err(e) => {
+                    warn!(tool = tool_name, error = %e, "debug script parse failed");
+                    Ok(e.to_tool_result())
+                }
+            },
+            Err(ToolError::Timeout(t)) => {
+                warn!(tool = tool_name, timeout_secs = t, "debug script timed out");
+                Ok(
+                    ToolError::IdaError(format!("{tool_name} timed out after {t}s"))
+                        .to_tool_result(),
+                )
+            }
+            Err(e) => Ok(e.to_tool_result()),
+        }
+    }
+
     async fn open_idb_routed(
         &self,
         router: &crate::router::RouterState,
@@ -4789,6 +4824,533 @@ impl IdaMcpServer {
             }
             Err(e) => Ok(e.to_tool_result()),
         }
+    }
+
+    #[tool(
+        description = "Load a debugger module (e.g. 'mac', 'linux', 'gdb'). Must be called before starting a debug session."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_load_debugger(
+        &self,
+        Parameters(req): Parameters<DbgLoadDebuggerRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_load_debugger");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let name = req.debugger_name.as_deref().unwrap_or("mac");
+        let is_remote = req.is_remote.unwrap_or(false);
+        let script =
+            crate::ida::handlers::debug::process::generate_load_debugger_script(name, is_remote);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_load_debugger",
+            &script,
+            timeout,
+            json!({"debugger_name": name, "is_remote": is_remote}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Start a process under the debugger. Auto-loads the native debugger if not already loaded."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_start_process(
+        &self,
+        Parameters(req): Parameters<DbgStartProcessRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_start_process");
+        let timeout = req.timeout_secs.unwrap_or(60).min(600);
+        let script = crate::ida::handlers::debug::process::generate_start_process_script(
+            req.path.as_deref(),
+            req.args.as_deref(),
+            req.start_dir.as_deref(),
+            timeout,
+        );
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_start_process",
+            &script,
+            timeout,
+            json!({"path": req.path, "args": req.args, "start_dir": req.start_dir}),
+        )
+        .await
+    }
+
+    #[tool(description = "Attach the debugger to a running process by PID.")]
+    #[instrument(skip(self))]
+    async fn dbg_attach_process(
+        &self,
+        Parameters(req): Parameters<DbgAttachProcessRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_attach_process");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let script =
+            crate::ida::handlers::debug::process::generate_attach_process_script(req.pid, timeout);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_attach_process",
+            &script,
+            timeout,
+            json!({"pid": req.pid}),
+        )
+        .await
+    }
+
+    #[tool(description = "Detach the debugger from the current process without terminating it.")]
+    #[instrument(skip(self))]
+    async fn dbg_detach_process(
+        &self,
+        Parameters(req): Parameters<DbgDetachProcessRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_detach_process");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let script = crate::ida::handlers::debug::process::generate_detach_process_script();
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_detach_process",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(description = "Terminate the debugged process and end the debug session.")]
+    #[instrument(skip(self))]
+    async fn dbg_exit_process(
+        &self,
+        Parameters(req): Parameters<DbgExitProcessRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_exit_process");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let script = crate::ida::handlers::debug::process::generate_exit_process_script();
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_exit_process",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Get current debugger and process state (DSTATE_NOTASK/DSTATE_SUSP/DSTATE_RUN)."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_get_state(
+        &self,
+        Parameters(req): Parameters<DbgGetStateRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_get_state");
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::process::generate_get_state_script();
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_get_state",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Set a breakpoint at the given address. Supports software, hardware, read/write watchpoints."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_add_breakpoint(
+        &self,
+        Parameters(req): Parameters<DbgAddBreakpointRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_add_breakpoint");
+        let addr = match crate::ida::handlers::parse_address_str(&req.address) {
+            Ok(a) => a,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let size = req.size.unwrap_or(0);
+        let bpt_type = req.bpt_type.as_deref().unwrap_or("soft");
+        let script = crate::ida::handlers::debug::breakpoint::generate_add_breakpoint_script(
+            addr,
+            size,
+            bpt_type,
+            req.condition.as_deref(),
+        );
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_add_breakpoint",
+            &script,
+            timeout,
+            json!({"address": req.address, "size": size, "bpt_type": bpt_type}),
+        )
+        .await
+    }
+
+    #[tool(description = "Delete a breakpoint at the given address.")]
+    #[instrument(skip(self))]
+    async fn dbg_del_breakpoint(
+        &self,
+        Parameters(req): Parameters<DbgDelBreakpointRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_del_breakpoint");
+        let addr = match crate::ida::handlers::parse_address_str(&req.address) {
+            Ok(a) => a,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::breakpoint::generate_del_breakpoint_script(addr);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_del_breakpoint",
+            &script,
+            timeout,
+            json!({"address": req.address}),
+        )
+        .await
+    }
+
+    #[tool(description = "Enable or disable a breakpoint at the given address.")]
+    #[instrument(skip(self))]
+    async fn dbg_enable_breakpoint(
+        &self,
+        Parameters(req): Parameters<DbgEnableBreakpointRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_enable_breakpoint");
+        let addr = match crate::ida::handlers::parse_address_str(&req.address) {
+            Ok(a) => a,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let enable = req.enable.unwrap_or(true);
+        let script = crate::ida::handlers::debug::breakpoint::generate_enable_breakpoint_script(
+            addr, enable,
+        );
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_enable_breakpoint",
+            &script,
+            timeout,
+            json!({"address": req.address, "enable": enable}),
+        )
+        .await
+    }
+
+    #[tool(description = "List all breakpoints in the current IDA database.")]
+    #[instrument(skip(self))]
+    async fn dbg_list_breakpoints(
+        &self,
+        Parameters(req): Parameters<DbgListBreakpointsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_list_breakpoints");
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::breakpoint::generate_list_breakpoints_script();
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_list_breakpoints",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Continue execution until the next breakpoint or debug event. Process must be suspended."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_continue(
+        &self,
+        Parameters(req): Parameters<DbgContinueRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_continue");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let script = crate::ida::handlers::debug::execution::generate_continue_script(timeout);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_continue",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Step into the next instruction (follows calls). Process must be suspended."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_step_into(
+        &self,
+        Parameters(req): Parameters<DbgStepIntoRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_step_into");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let script = crate::ida::handlers::debug::execution::generate_step_into_script(timeout);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_step_into",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Step over the next instruction (skips calls). Process must be suspended."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_step_over(
+        &self,
+        Parameters(req): Parameters<DbgStepOverRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_step_over");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let script = crate::ida::handlers::debug::execution::generate_step_over_script(timeout);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_step_over",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(description = "Step until the current function returns. Process must be suspended.")]
+    #[instrument(skip(self))]
+    async fn dbg_step_until_ret(
+        &self,
+        Parameters(req): Parameters<DbgStepUntilRetRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_step_until_ret");
+        let timeout = req.timeout_secs.unwrap_or(60).min(600);
+        let script =
+            crate::ida::handlers::debug::execution::generate_step_until_ret_script(timeout);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_step_until_ret",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Run execution to a specific address. Sets a temporary breakpoint and continues."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_run_to(
+        &self,
+        Parameters(req): Parameters<DbgRunToRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_run_to");
+        let addr = match crate::ida::handlers::parse_address_str(&req.address) {
+            Ok(a) => a,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(60).min(600);
+        let script = crate::ida::handlers::debug::execution::generate_run_to_script(addr, timeout);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_run_to",
+            &script,
+            timeout,
+            json!({"address": req.address}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Read register values from the suspended process. Returns all registers or a filtered subset."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_get_registers(
+        &self,
+        Parameters(req): Parameters<DbgGetRegistersRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_get_registers");
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::inspect::generate_get_registers_script(
+            req.register_names.as_deref(),
+        );
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_get_registers",
+            &script,
+            timeout,
+            json!({"register_names": req.register_names}),
+        )
+        .await
+    }
+
+    #[tool(description = "Set a register value in the suspended process.")]
+    #[instrument(skip(self))]
+    async fn dbg_set_register(
+        &self,
+        Parameters(req): Parameters<DbgSetRegisterRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_set_register");
+        let value = match crate::ida::handlers::parse_address_str(&req.value) {
+            Ok(v) => v,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::inspect::generate_set_register_script(
+            &req.register_name,
+            value,
+        );
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_set_register",
+            &script,
+            timeout,
+            json!({"register_name": req.register_name, "value": req.value}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Read raw bytes from the debugged process memory. Process must be suspended. Max 4096 bytes."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_read_memory(
+        &self,
+        Parameters(req): Parameters<DbgReadMemoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_read_memory");
+        let addr = match crate::ida::handlers::parse_address_str(&req.address) {
+            Ok(a) => a,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script =
+            crate::ida::handlers::debug::inspect::generate_read_memory_script(addr, req.size);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_read_memory",
+            &script,
+            timeout,
+            json!({"address": req.address, "size": req.size}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Write bytes to the debugged process memory. Process must be suspended. Data is hex-encoded."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_write_memory(
+        &self,
+        Parameters(req): Parameters<DbgWriteMemoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_write_memory");
+        let addr = match crate::ida::handlers::parse_address_str(&req.address) {
+            Ok(a) => a,
+            Err(e) => return Ok(e.to_tool_result()),
+        };
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script =
+            crate::ida::handlers::debug::inspect::generate_write_memory_script(addr, &req.data);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_write_memory",
+            &script,
+            timeout,
+            json!({"address": req.address, "data": req.data}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "List memory regions of the debugged process (start, end, name, permissions)."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_get_memory_info(
+        &self,
+        Parameters(req): Parameters<DbgGetMemoryInfoRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_get_memory_info");
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::inspect::generate_get_memory_info_script();
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_get_memory_info",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(description = "List all threads in the debugged process with their IDs and names.")]
+    #[instrument(skip(self))]
+    async fn dbg_list_threads(
+        &self,
+        Parameters(req): Parameters<DbgListThreadsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_list_threads");
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script = crate::ida::handlers::debug::inspect::generate_list_threads_script();
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_list_threads",
+            &script,
+            timeout,
+            json!({}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Select a thread as the current debugging context. Process must be suspended."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_select_thread(
+        &self,
+        Parameters(req): Parameters<DbgSelectThreadRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_select_thread");
+        let timeout = req.timeout_secs.unwrap_or(10).min(600);
+        let script =
+            crate::ida::handlers::debug::inspect::generate_select_thread_script(req.thread_id);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_select_thread",
+            &script,
+            timeout,
+            json!({"thread_id": req.thread_id}),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Wait for the next debug event (breakpoint hit, exception, process exit, etc.)."
+    )]
+    #[instrument(skip(self))]
+    async fn dbg_wait_event(
+        &self,
+        Parameters(req): Parameters<DbgWaitEventRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Tool call: dbg_wait_event");
+        let timeout = req.timeout_secs.unwrap_or(30).min(600);
+        let flags = req
+            .flags
+            .as_deref()
+            .and_then(|s| crate::ida::handlers::parse_address_str(s).ok())
+            .unwrap_or(0x0001) as u32;
+        let script =
+            crate::ida::handlers::debug::inspect::generate_wait_event_script(timeout, flags);
+        self.run_debug_script(
+            req.db_handle.as_deref(),
+            "dbg_wait_event",
+            &script,
+            timeout,
+            json!({"flags": req.flags}),
+        )
+        .await
     }
 }
 
