@@ -64,11 +64,28 @@ pub enum CliCommand {
         limit: usize,
     },
     ListSegments,
-    Prewarm,
+    Prewarm {
+        #[arg(long)]
+        keep_warm: bool,
+        #[arg(long)]
+        queue: bool,
+        #[arg(long, default_value_t = 0)]
+        priority: u8,
+        #[arg(long)]
+        tenant: Option<String>,
+    },
     PrewarmMany {
         list_file: String,
         #[arg(long, default_value_t = 4)]
         jobs: usize,
+        #[arg(long)]
+        keep_warm: bool,
+        #[arg(long)]
+        queue: bool,
+        #[arg(long, default_value_t = 0)]
+        priority: u8,
+        #[arg(long)]
+        tenant: Option<String>,
     },
     Close,
     Status,
@@ -100,8 +117,26 @@ pub async fn run(args: CliArgs) -> anyhow::Result<()> {
 
     match args.command {
         CliCommand::Pipe => run_pipe(&socket_path, args.path.as_deref(), &output_mode).await,
-        CliCommand::PrewarmMany { list_file, jobs } => {
-            run_prewarm_many(&socket_path, &list_file, jobs.max(1), &output_mode, timeout).await
+        CliCommand::PrewarmMany {
+            list_file,
+            jobs,
+            keep_warm,
+            queue,
+            priority,
+            tenant,
+        } => {
+            run_prewarm_many(
+                &socket_path,
+                &list_file,
+                jobs.max(1),
+                keep_warm,
+                queue,
+                priority,
+                tenant,
+                &output_mode,
+                timeout,
+            )
+            .await
         }
         CliCommand::Raw { json_str } => {
             let req = complete_envelope(&json_str, 1)?;
@@ -165,7 +200,20 @@ fn build_rpc_params(cmd: &CliCommand, path: Option<&str>) -> (String, serde_json
             "list_strings"
         }
         CliCommand::ListSegments => "list_segments",
-        CliCommand::Prewarm => "prewarm",
+        CliCommand::Prewarm {
+            keep_warm,
+            queue,
+            priority,
+            tenant,
+        } => {
+            params.insert("keep_warm".to_string(), serde_json::json!(keep_warm));
+            params.insert("queue".to_string(), serde_json::json!(queue));
+            params.insert("priority".to_string(), serde_json::json!(priority));
+            if let Some(tenant) = tenant {
+                params.insert("tenant_id".to_string(), serde_json::json!(tenant));
+            }
+            "prewarm"
+        }
         CliCommand::Close => "close",
         CliCommand::Status => "status",
         CliCommand::Shutdown => "shutdown",
@@ -244,6 +292,10 @@ async fn run_prewarm_many(
     socket_path: &PathBuf,
     list_file: &str,
     jobs: usize,
+    keep_warm: bool,
+    queue: bool,
+    priority: u8,
+    tenant: Option<String>,
     output_mode: &OutputMode,
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
@@ -262,12 +314,19 @@ async fn run_prewarm_many(
         let socket_path = socket_path.clone();
         let path = path.clone();
         let semaphore = semaphore.clone();
+        let tenant = tenant.clone();
         handles.push(tokio::spawn(async move {
             let _permit = semaphore.acquire_owned().await.expect("semaphore closed");
             let req = RpcRequest::new(
                 format!("prewarm-{idx}"),
                 "prewarm",
-                serde_json::json!({ "path": path }),
+                serde_json::json!({
+                    "path": path,
+                    "keep_warm": keep_warm,
+                    "queue": queue,
+                    "priority": priority,
+                    "tenant_id": tenant,
+                }),
             );
             let resp = send_request(&socket_path, &req, timeout).await;
             (path, resp)

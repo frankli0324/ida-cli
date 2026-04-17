@@ -11,6 +11,7 @@ use crate::ida::{RuntimeProbeResult, WorkerBackendKind};
 use crate::router::protocol::{RpcRequest, RpcResponse};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -38,6 +39,13 @@ pub struct RouterConfig {
     pub max_workers: usize,
     pub max_pending_per_worker: usize,
     pub max_concurrent_spawns: usize,
+    pub max_warm_workers: usize,
+    pub max_queued_prewarms: usize,
+    pub max_active_prewarms: usize,
+    pub max_prewarms_per_tenant: usize,
+    pub max_idb_cache_bytes: u64,
+    pub max_response_cache_bytes: u64,
+    pub node_id: String,
 }
 
 impl RouterConfig {
@@ -61,13 +69,116 @@ impl RouterConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|v| *v > 0)
             .unwrap_or_else(|| max_workers.clamp(1, 4));
+        let max_warm_workers = std::env::var("IDA_CLI_MAX_WARM_WORKERS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(16);
+        let max_queued_prewarms = std::env::var("IDA_CLI_MAX_QUEUED_PREWARMS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(256);
+        let max_active_prewarms = std::env::var("IDA_CLI_MAX_ACTIVE_PREWARMS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(4);
+        let max_prewarms_per_tenant = std::env::var("IDA_CLI_MAX_PREWARMS_PER_TENANT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(2);
+        let max_idb_cache_bytes = std::env::var("IDA_CLI_MAX_IDB_CACHE_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(50 * 1024 * 1024 * 1024);
+        let max_response_cache_bytes = std::env::var("IDA_CLI_MAX_RESPONSE_CACHE_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(2 * 1024 * 1024 * 1024);
+        let node_id = std::env::var("IDA_CLI_NODE_ID").unwrap_or_else(|_| {
+            format!(
+                "{}-{}",
+                std::env::var("HOSTNAME").unwrap_or_else(|_| "ida-cli".to_string()),
+                std::process::id()
+            )
+        });
 
         Self {
             max_workers,
             max_pending_per_worker,
             max_concurrent_spawns,
+            max_warm_workers,
+            max_queued_prewarms,
+            max_active_prewarms,
+            max_prewarms_per_tenant,
+            max_idb_cache_bytes,
+            max_response_cache_bytes,
+            node_id,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct WarmLease {
+    handle: DbHandle,
+    token: String,
+    path: PathBuf,
+    cache_path: Option<PathBuf>,
+    tenant_id: String,
+    pinned_at: Instant,
+    last_hit: Instant,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WarmLeaseStatus {
+    pub path: String,
+    pub handle: String,
+    pub tenant_id: String,
+    pub cache_path: Option<String>,
+    pub pinned_secs: u64,
+    pub idle_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedPrewarmTask {
+    task_id: String,
+    path: String,
+    tenant_id: String,
+    priority: u8,
+    keep_warm: bool,
+    enqueued_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct ActivePrewarmTask {
+    task_id: String,
+    path: String,
+    tenant_id: String,
+    priority: u8,
+    keep_warm: bool,
+    started_at: Instant,
+}
+
+#[derive(Debug, Default)]
+struct PrewarmQueueState {
+    queued: Vec<QueuedPrewarmTask>,
+    active: HashMap<String, ActivePrewarmTask>,
+    recent: Vec<serde_json::Value>,
+    next_task_id: u64,
+    tenant_active: HashMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrewarmTaskStatus {
+    pub task_id: String,
+    pub path: String,
+    pub tenant_id: String,
+    pub priority: u8,
+    pub keep_warm: bool,
+    pub state: String,
+    pub age_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -89,9 +200,20 @@ pub struct RouterStatus {
     pub max_workers: usize,
     pub max_pending_per_worker: usize,
     pub max_concurrent_spawns: usize,
+    pub max_warm_workers: usize,
+    pub max_queued_prewarms: usize,
+    pub max_active_prewarms: usize,
+    pub max_prewarms_per_tenant: usize,
+    pub max_idb_cache_bytes: u64,
+    pub max_response_cache_bytes: u64,
+    pub node_id: String,
     pub runtime_probe: Option<RuntimeProbeResult>,
     pub backend_counts: HashMap<String, usize>,
     pub workers: Vec<WorkerStatus>,
+    pub warm_pool: Vec<WarmLeaseStatus>,
+    pub prewarm_queue: Vec<PrewarmTaskStatus>,
+    pub prewarm_active: Vec<PrewarmTaskStatus>,
+    pub prewarm_recent: Vec<serde_json::Value>,
     pub idb_cache: crate::idb_store::IdbStoreStats,
     pub response_cache: crate::server::response_cache::ResponseCacheStats,
 }
@@ -102,6 +224,9 @@ pub struct RouterState {
     config: Arc<RouterConfig>,
     spawn_gate: Arc<Semaphore>,
     cached_probe: Arc<Mutex<Option<RuntimeProbeResult>>>,
+    warm_pool: Arc<Mutex<HashMap<PathBuf, WarmLease>>>,
+    prewarm_queue: Arc<Mutex<PrewarmQueueState>>,
+    maintenance_started: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for RouterState {
@@ -138,6 +263,9 @@ impl RouterState {
             config: config.clone(),
             spawn_gate: Arc::new(Semaphore::new(config.max_concurrent_spawns)),
             cached_probe: Arc::new(Mutex::new(None)),
+            warm_pool: Arc::new(Mutex::new(HashMap::new())),
+            prewarm_queue: Arc::new(Mutex::new(PrewarmQueueState::default())),
+            maintenance_started: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -606,6 +734,7 @@ impl RouterState {
 
     pub async fn close_worker(&self, handle: &str) -> Result<(), crate::error::ToolError> {
         let mut inner = self.inner.lock().await;
+        self.warm_pool.lock().await.retain(|_, lease| lease.handle != handle);
 
         if let Some(mut worker) = inner.workers.remove(handle) {
             if let Some(path) = &worker.open_path {
@@ -698,15 +827,71 @@ impl RouterState {
             })
             .collect();
 
+        let warm_pool = self
+            .warm_pool
+            .lock()
+            .await
+            .values()
+            .map(|lease| WarmLeaseStatus {
+                path: lease.path.display().to_string(),
+                handle: lease.handle.clone(),
+                tenant_id: lease.tenant_id.clone(),
+                cache_path: lease.cache_path.as_ref().map(|p| p.display().to_string()),
+                pinned_secs: lease.pinned_at.elapsed().as_secs(),
+                idle_secs: lease.last_hit.elapsed().as_secs(),
+            })
+            .collect();
+
+        let queue = self.prewarm_queue.lock().await;
+        let prewarm_queue = queue
+            .queued
+            .iter()
+            .map(|task| PrewarmTaskStatus {
+                task_id: task.task_id.clone(),
+                path: task.path.clone(),
+                tenant_id: task.tenant_id.clone(),
+                priority: task.priority,
+                keep_warm: task.keep_warm,
+                state: "queued".to_string(),
+                age_secs: task.enqueued_at.elapsed().as_secs(),
+            })
+            .collect();
+        let prewarm_active = queue
+            .active
+            .values()
+            .map(|task| PrewarmTaskStatus {
+                task_id: task.task_id.clone(),
+                path: task.path.clone(),
+                tenant_id: task.tenant_id.clone(),
+                priority: task.priority,
+                keep_warm: task.keep_warm,
+                state: "running".to_string(),
+                age_secs: task.started_at.elapsed().as_secs(),
+            })
+            .collect();
+        let prewarm_recent = queue.recent.clone();
+        drop(queue);
+
         RouterStatus {
             worker_count: inner.workers.len(),
             active_handle: inner.active.clone(),
             max_workers: self.config.max_workers,
             max_pending_per_worker: self.config.max_pending_per_worker,
             max_concurrent_spawns: self.config.max_concurrent_spawns,
+            max_warm_workers: self.config.max_warm_workers,
+            max_queued_prewarms: self.config.max_queued_prewarms,
+            max_active_prewarms: self.config.max_active_prewarms,
+            max_prewarms_per_tenant: self.config.max_prewarms_per_tenant,
+            max_idb_cache_bytes: self.config.max_idb_cache_bytes,
+            max_response_cache_bytes: self.config.max_response_cache_bytes,
+            node_id: self.config.node_id.clone(),
             runtime_probe,
             backend_counts,
             workers,
+            warm_pool,
+            prewarm_queue,
+            prewarm_active,
+            prewarm_recent,
             idb_cache: crate::idb_store::IdbStore::new().stats(),
             response_cache: crate::server::response_cache::stats(),
         }
@@ -938,6 +1123,16 @@ impl RouterState {
         &self,
         path: &str,
     ) -> Result<serde_json::Value, crate::error::ToolError> {
+        self.prewarm_path_with_options(path, false, "default")
+            .await
+    }
+
+    pub async fn prewarm_path_with_options(
+        &self,
+        path: &str,
+        keep_warm: bool,
+        tenant_id: &str,
+    ) -> Result<serde_json::Value, crate::error::ToolError> {
         use crate::error::ToolError;
 
         let expanded = crate::expand_path(path);
@@ -975,7 +1170,18 @@ impl RouterState {
         let cached_after = store.lookup(&canonical).map(|p| p.display().to_string());
 
         let mut closed_worker = false;
-        if !already_open {
+        let mut kept_warm = false;
+        if keep_warm {
+            self.install_warm_lease(
+                canonical.clone(),
+                handle.clone(),
+                ref_token.clone(),
+                tenant_id.to_string(),
+                cached_after.as_ref().map(PathBuf::from),
+            )
+            .await?;
+            kept_warm = true;
+        } else if !already_open {
             if let Some((_, remaining)) = self.release_ref_token(&ref_token).await {
                 if remaining == 0 {
                     self.close_by_path(&canonical).await?;
@@ -994,8 +1200,188 @@ impl RouterState {
             "cache_path": cached_after,
             "database_info": database_info,
             "already_open": already_open,
+            "kept_warm": kept_warm,
             "worker_closed_after_prewarm": closed_worker,
         }))
+    }
+
+    async fn install_warm_lease(
+        &self,
+        canonical_path: PathBuf,
+        handle: DbHandle,
+        token: String,
+        tenant_id: String,
+        cache_path: Option<PathBuf>,
+    ) -> Result<(), crate::error::ToolError> {
+        while self.warm_pool.lock().await.len() >= self.config.max_warm_workers {
+            let candidate = {
+                self.warm_pool
+                    .lock()
+                    .await
+                    .iter()
+                    .min_by_key(|(_, lease)| lease.last_hit)
+                    .map(|(path, _)| path.clone())
+            };
+            let Some(path) = candidate else { break };
+            self.release_warm_lease(&path).await?;
+        }
+
+        let lease = WarmLease {
+            handle,
+            token,
+            path: canonical_path.clone(),
+            cache_path,
+            tenant_id,
+            pinned_at: Instant::now(),
+            last_hit: Instant::now(),
+        };
+        self.warm_pool.lock().await.insert(canonical_path, lease);
+        Ok(())
+    }
+
+    async fn release_warm_lease(
+        &self,
+        path: &PathBuf,
+    ) -> Result<(), crate::error::ToolError> {
+        if let Some(lease) = self.warm_pool.lock().await.remove(path) {
+            if let Some((handle, remaining)) = self.release_ref_token(&lease.token).await {
+                if remaining == 0 {
+                    self.close_worker(&handle).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn enqueue_prewarm(
+        &self,
+        path: &str,
+        priority: u8,
+        keep_warm: bool,
+        tenant_id: Option<String>,
+    ) -> Result<serde_json::Value, crate::error::ToolError> {
+        use crate::error::ToolError;
+
+        let tenant_id = tenant_id.unwrap_or_else(|| "default".to_string());
+        let mut queue = self.prewarm_queue.lock().await;
+        if queue.queued.len() >= self.config.max_queued_prewarms {
+            return Err(ToolError::Busy);
+        }
+        let task_id = format!("prewarm-{}", queue.next_task_id);
+        queue.next_task_id += 1;
+        queue.queued.push(QueuedPrewarmTask {
+            task_id: task_id.clone(),
+            path: path.to_string(),
+            tenant_id: tenant_id.clone(),
+            priority,
+            keep_warm,
+            enqueued_at: Instant::now(),
+        });
+        queue.queued.sort_by(|lhs, rhs| {
+            rhs.priority
+                .cmp(&lhs.priority)
+                .then_with(|| lhs.enqueued_at.cmp(&rhs.enqueued_at))
+        });
+        let queued = queue.queued.len();
+        Ok(serde_json::json!({
+            "task_id": task_id,
+            "status": "queued",
+            "path": path,
+            "tenant_id": tenant_id,
+            "priority": priority,
+            "keep_warm": keep_warm,
+            "queued": queued,
+        }))
+    }
+
+    async fn drive_prewarm_queue(&self) {
+        loop {
+            let task = {
+                let mut queue = self.prewarm_queue.lock().await;
+                if queue.active.len() >= self.config.max_active_prewarms {
+                    None
+                } else {
+                    let pos = queue.queued.iter().position(|task| {
+                        queue
+                            .tenant_active
+                            .get(&task.tenant_id)
+                            .copied()
+                            .unwrap_or(0)
+                            < self.config.max_prewarms_per_tenant
+                    });
+                    pos.map(|idx| {
+                        let task = queue.queued.remove(idx);
+                        queue.tenant_active
+                            .entry(task.tenant_id.clone())
+                            .and_modify(|count| *count += 1)
+                            .or_insert(1);
+                        queue.active.insert(
+                            task.task_id.clone(),
+                            ActivePrewarmTask {
+                                task_id: task.task_id.clone(),
+                                path: task.path.clone(),
+                                tenant_id: task.tenant_id.clone(),
+                                priority: task.priority,
+                                keep_warm: task.keep_warm,
+                                started_at: Instant::now(),
+                            },
+                        );
+                        task
+                    })
+                }
+            };
+
+            let Some(task) = task else { break };
+            let state = self.clone();
+            tokio::spawn(async move {
+                let result = state
+                    .prewarm_path_with_options(&task.path, task.keep_warm, &task.tenant_id)
+                    .await;
+                let mut queue = state.prewarm_queue.lock().await;
+                queue.active.remove(&task.task_id);
+                if let Some(count) = queue.tenant_active.get_mut(&task.tenant_id) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        queue.tenant_active.remove(&task.tenant_id);
+                    }
+                }
+                let summary = match result {
+                    Ok(value) => serde_json::json!({
+                        "task_id": task.task_id,
+                        "path": task.path,
+                        "tenant_id": task.tenant_id,
+                        "status": "completed",
+                        "result": value,
+                    }),
+                    Err(err) => serde_json::json!({
+                        "task_id": task.task_id,
+                        "path": task.path,
+                        "tenant_id": task.tenant_id,
+                        "status": "failed",
+                        "error": err.to_string(),
+                    }),
+                };
+                queue.recent.push(summary);
+                if queue.recent.len() > 64 {
+                    let drain = queue.recent.len() - 64;
+                    queue.recent.drain(0..drain);
+                }
+            });
+        }
+    }
+
+    async fn prune_caches(&self) {
+        let warm_pool = self.warm_pool.lock().await;
+        let pinned_groups: HashSet<String> = warm_pool
+            .values()
+            .filter_map(|lease| lease.cache_path.as_ref())
+            .map(|path| path.with_extension("").display().to_string())
+            .collect();
+        drop(warm_pool);
+
+        let _ = crate::idb_store::IdbStore::new()
+            .evict_to_limit(self.config.max_idb_cache_bytes, &pinned_groups);
+        let _ = crate::server::response_cache::prune_to_limit(self.config.max_response_cache_bytes);
     }
 
     /// `auto_exit_grace`: `Some(duration)` → exit when no workers remain for that
@@ -1006,6 +1392,14 @@ impl RouterState {
         check_interval: Duration,
         auto_exit_grace: Option<Duration>,
     ) {
+        if self
+            .maintenance_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
         let state = self.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(check_interval);
@@ -1036,6 +1430,9 @@ impl RouterState {
                     );
                     let _ = state.close_worker(&handle).await;
                 }
+
+                state.drive_prewarm_queue().await;
+                state.prune_caches().await;
 
                 if let Some(grace) = auto_exit_grace {
                     let worker_count = state.worker_count().await;

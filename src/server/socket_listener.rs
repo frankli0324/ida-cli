@@ -132,7 +132,36 @@ async fn dispatch_cli_request(
 
         "prewarm" => {
             let resp = if let Some(ref p) = path {
-                match router.prewarm_path(p).await {
+                let queue = req.params.get("queue").and_then(|v| v.as_bool()).unwrap_or(false);
+                let keep_warm = req
+                    .params
+                    .get("keep_warm")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let priority = req
+                    .params
+                    .get("priority")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u8;
+                let tenant_id = req
+                    .params
+                    .get("tenant_id")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+
+                let result = if queue {
+                    router.enqueue_prewarm(p, priority, keep_warm, tenant_id).await
+                } else {
+                    router
+                        .prewarm_path_with_options(
+                            p,
+                            keep_warm,
+                            tenant_id.as_deref().unwrap_or("default"),
+                        )
+                        .await
+                };
+
+                match result {
                     Ok(value) => RpcResponse::ok(&req.id, value),
                     Err(e) => RpcResponse::err(&req.id, -32000, e.to_string()),
                 }

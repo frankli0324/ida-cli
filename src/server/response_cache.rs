@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::path::Path;
+use std::time::SystemTime;
 
 const DEFAULT_MAX_INLINE_BYTES: usize = 512;
 const CACHE_DIR: &str = "/tmp/ida-cli-out";
@@ -9,6 +10,13 @@ pub struct ResponseCacheStats {
     pub dir: String,
     pub file_count: usize,
     pub total_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResponseCacheEvictionStats {
+    pub evicted_files: usize,
+    pub evicted_bytes: u64,
+    pub remaining_bytes: u64,
 }
 
 pub fn guard_response_size(method: &str, result: Value) -> Value {
@@ -108,5 +116,53 @@ pub fn stats() -> ResponseCacheStats {
         dir: path.display().to_string(),
         file_count,
         total_size_bytes,
+    }
+}
+
+pub fn prune_to_limit(max_bytes: u64) -> ResponseCacheEvictionStats {
+    let path = Path::new(CACHE_DIR);
+    let mut files = Vec::new();
+    let mut total_size = 0u64;
+
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            total_size = total_size.saturating_add(meta.len());
+            files.push((entry.path(), meta.len(), mtime));
+        }
+    }
+
+    if total_size <= max_bytes {
+        return ResponseCacheEvictionStats {
+            evicted_files: 0,
+            evicted_bytes: 0,
+            remaining_bytes: total_size,
+        };
+    }
+
+    files.sort_by_key(|(_, _, mtime)| *mtime);
+    let mut evicted_files = 0usize;
+    let mut evicted_bytes = 0u64;
+
+    for (path, size, _) in files {
+        if total_size <= max_bytes {
+            break;
+        }
+        let _ = std::fs::remove_file(path);
+        total_size = total_size.saturating_sub(size);
+        evicted_files += 1;
+        evicted_bytes = evicted_bytes.saturating_add(size);
+    }
+
+    ResponseCacheEvictionStats {
+        evicted_files,
+        evicted_bytes,
+        remaining_bytes: total_size,
     }
 }
