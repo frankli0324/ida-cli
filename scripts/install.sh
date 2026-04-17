@@ -16,6 +16,8 @@ usage() {
   cat <<'EOF'
 Install ida-cli from GitHub releases or build it locally from source.
 
+Supported host platforms: macOS and Linux.
+
 Usage:
   install.sh [options]
 
@@ -103,13 +105,9 @@ case "$OS" in
     ARCHIVE_EXT="tar.gz"
     LIB_ENV="LD_LIBRARY_PATH"
     ;;
-  MINGW*|MSYS*|CYGWIN*)
-    PLATFORM="Windows"
-    ARCHIVE_EXT="zip"
-    LIB_ENV="PATH"
-    ;;
   *)
     echo "unsupported operating system: $OS" >&2
+    echo "ida-cli currently supports macOS and Linux hosts only" >&2
     exit 1
     ;;
 esac
@@ -127,18 +125,8 @@ case "$ARCH" in
     ;;
 esac
 
-if [[ "$PLATFORM" == "Windows" && "$ARCH_LABEL" != "x86_64" ]]; then
-  echo "prebuilt Windows assets currently support x86_64 only" >&2
-  exit 1
-fi
-
-if [[ "$PLATFORM" == "Windows" ]]; then
-  ASSET_NAME="ida-cli-Windows_x86_64.zip"
-  BINARY_NAME="ida-cli.exe"
-else
-  ASSET_NAME="ida-cli-${PLATFORM}_${ARCH_LABEL}.${ARCHIVE_EXT}"
-  BINARY_NAME="ida-cli"
-fi
+ASSET_NAME="ida-cli-${PLATFORM}_${ARCH_LABEL}.${ARCHIVE_EXT}"
+BINARY_NAME="ida-cli"
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -166,18 +154,10 @@ download_release_asset() {
   echo "downloading release asset: ${ASSET_NAME}"
   curl -fsSL "${base_url}/${ASSET_NAME}" -o "$archive_path"
 
-  case "$ARCHIVE_EXT" in
-    tar.gz)
-      tar -xzf "$archive_path" -C "$TMP_DIR"
-      ;;
-    zip)
-      need_cmd unzip
-      unzip -q "$archive_path" -d "$TMP_DIR"
-      ;;
-  esac
+  tar -xzf "$archive_path" -C "$TMP_DIR"
 
   local extracted
-  extracted="$(find "$TMP_DIR" -type f \( -name "ida-cli" -o -name "ida-cli.exe" \) | head -n 1)"
+  extracted="$(find "$TMP_DIR" -type f -name "ida-cli" | head -n 1)"
   if [[ -z "$extracted" ]]; then
     echo "release asset did not contain ${BINARY_NAME}" >&2
     return 1

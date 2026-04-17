@@ -1,6 +1,6 @@
 # ida-cli
 
-Headless IDA CLI and skill-first toolkit for binary analysis with automatic runtime backend selection.
+Headless IDA CLI and skill-first toolkit for binary analysis on macOS and Linux, with automatic runtime backend selection.
 
 [中文说明](README.zh-CN.md)
 
@@ -13,18 +13,33 @@ Headless IDA CLI and skill-first toolkit for binary analysis with automatic runt
 
 The underlying service layer is started and managed automatically by the CLI when needed.
 
-It supports two runtime modes:
+## Support Matrix
 
-- `native-linked`
-  Uses the vendored `idalib` backend for newer runtimes that can safely open databases in-process.
+### Host platforms
+
+- Supported: macOS, Linux
+- Not supported: Windows
+
+### IDA runtime policy
+
+- `IDA < 9.0`: unsupported
+- `IDA 9.0 – 9.2`: `idat-compat`
+  Uses `idat` + IDAPython as the compatibility path.
+- `IDA 9.3+`: `native-linked`
+  Uses the vendored `idalib` path when the runtime is safe to open in-process.
+
+This backend choice is made at runtime by `probe-runtime`. Build-time SDK requirements are separate: the vendored native layer still needs an IDA SDK present during compilation.
+
+It uses two runtime modes:
+
 - `idat-compat`
-  Uses `idat` + IDAPython as a compatibility backend for older runtimes that would otherwise crash in `open_database_quiet()`.
-
-On the current branch, older 9.x runtimes such as the tested local 9.1 and 9.3 installations are routed to `idat-compat` automatically.
+  For IDA 9.0-9.2. This path shells out through `idat` and IDAPython.
+- `native-linked`
+  For IDA 9.3+ runtimes that can safely open databases in-process.
 
 ## What Works Today
 
-On the tested local IDA 9.1 and 9.3 runtimes, `ida-cli` can already:
+On supported IDA 9.x runtimes, `ida-cli` can already:
 
 - Open raw binaries and reuse cached databases
 - List and resolve functions
@@ -76,7 +91,7 @@ Notes:
 git clone https://github.com/cpkt9762/ida-cli.git
 cd ida-cli
 
-export IDADIR="/path/to/ida/Contents/MacOS"
+export IDADIR="/path/to/ida"
 export IDASDKDIR="/path/to/ida-sdk"
 
 cargo build --bin ida-cli
@@ -97,10 +112,14 @@ cargo build --bin ida-cli
 ./target/debug/ida-cli probe-runtime
 ```
 
-Example output on the tested 9.3 installation:
+Example backend selections:
 
 ```json
-{"runtime":{"major":9,"minor":0,"build":260213},"backend":"idat-compat","supported":true,"reason":null}
+{"runtime":{"major":9,"minor":1,"build":250226},"backend":"idat-compat","supported":true,"reason":null}
+```
+
+```json
+{"runtime":{"major":9,"minor":3,"build":260213},"backend":"native-linked","supported":true,"reason":null}
 ```
 
 ### Install the skill
@@ -131,7 +150,8 @@ That wrapper installs `ida-cli` automatically if it is missing, then runs the re
 
 - Rust 1.77+
 - LLVM/Clang
-- IDA installation via `IDADIR` (supports IDA 9.1 – 9.3)
+- macOS or Linux host
+- IDA installation via `IDADIR` (runtime support starts at IDA 9.0)
 - IDA SDK via `IDASDKDIR` or `IDALIB_SDK`
 
 The SDK lookup accepts both layouts:
@@ -141,13 +161,13 @@ The SDK lookup accepts both layouts:
 
 ## Runtime Notes
 
-### `native-linked`
-
-This backend links against the vendored `idalib` line and is intended for newer compatible runtimes.
-
 ### `idat-compat`
 
-This backend shells out to `idat`, runs short IDAPython scripts, and returns structured JSON results to the router. It exists to keep older runtimes operational without hard-crashing workers.
+This backend shells out to `idat`, runs short IDAPython scripts, and returns structured results back to the CLI runtime. It is the compatibility path for IDA 9.0-9.2 and the fallback for runtimes that should not open databases in-process.
+
+### `native-linked`
+
+This backend links against the vendored `idalib` line and is intended for IDA 9.3+ runtimes.
 
 ### Cache and local runtime paths
 
@@ -163,7 +183,7 @@ GitHub Actions now uses the open-source `HexRaysSA/ida-sdk` on hosted runners so
 Current workflow behavior:
 
 - Pushes and pull requests against `master` run validation
-- Tagged pushes like `v0.9.3` build release archives for Linux, macOS, and Windows
+- Tagged pushes like `v0.9.3` build release archives for Linux and macOS
 - Releases attach `install.sh` plus platform archives
 
 The release archives are built against SDK stubs, while the installed launcher resolves your local IDA runtime through `IDADIR` or common install paths before starting `ida-cli`.

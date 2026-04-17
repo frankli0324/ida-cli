@@ -2,6 +2,7 @@
 
 ## Requirements
 
+- macOS or Linux host
 - Rust 1.77+
 - LLVM/Clang
 - An IDA installation, provided via `IDADIR` or discoverable from common paths
@@ -9,10 +10,10 @@
 
 `ida-cli` uses two runtime strategies:
 
-- `native-linked`
-  Uses the vendored `idalib` backend for newer compatible runtimes.
 - `idat-compat`
-  Uses `idat` + IDAPython for older runtimes where in-process database opening is unsafe.
+  Uses `idat` + IDAPython for IDA 9.0-9.2, where in-process database opening is treated as unsafe.
+- `native-linked`
+  Uses the vendored `idalib` backend for IDA 9.3+ runtimes.
 
 That means the build is not restricted to one exact installed IDA runtime, but the SDK must still be present for compiling the vendored `idalib` layer.
 
@@ -22,7 +23,7 @@ That means the build is not restricted to one exact installed IDA runtime, but t
 git clone https://github.com/cpkt9762/ida-cli.git
 cd ida-cli
 
-export IDADIR="/Applications/IDA Professional 9.1.app/Contents/MacOS"
+export IDADIR="/path/to/ida"
 export IDASDKDIR="/path/to/ida-sdk"
 
 cargo build --bin ida-cli
@@ -59,7 +60,7 @@ Example:
 Typical outputs:
 
 ```json
-{"runtime":{"major":9,"minor":0,"build":250226},"backend":"idat-compat","supported":true,"reason":null}
+{"runtime":{"major":9,"minor":1,"build":250226},"backend":"idat-compat","supported":true,"reason":null}
 ```
 
 ```json
@@ -68,14 +69,11 @@ Typical outputs:
 
 ## Binary Names
 
-The primary executable is:
-
-- macOS/Linux: `target/debug/ida-cli` or `target/release/ida-cli`
-- Windows: `target/debug/ida-cli.exe` or `target/release/ida-cli.exe`
+The primary executable is `target/debug/ida-cli` or `target/release/ida-cli`.
 
 ## Common Commands
 
-Start the local server:
+Start the local runtime explicitly if you need the long-lived service process:
 
 ```bash
 ./target/debug/ida-cli serve
@@ -103,5 +101,7 @@ Run over HTTP:
 
 ## Notes
 
+- Host support is macOS and Linux only.
+- Runtime support starts at IDA 9.0.
+- IDA 9.0-9.2 uses `idat-compat`; IDA 9.3+ uses `native-linked`.
 - Building is native-only. Cross-compilation is not supported.
-- If you are using an older runtime such as the tested local 9.1 installation, the CLI can still work through `idat-compat`, but compile-time SDK requirements remain.

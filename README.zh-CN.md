@@ -1,6 +1,6 @@
 # ida-cli
 
-`ida-cli` 是一个无界面的 IDA CLI 与 skill-first 工具集，支持根据运行时自动选择后端。
+`ida-cli` 是一个无界面的 IDA CLI 与 skill-first 工具集，当前宿主平台支持 macOS 和 Linux，并会根据运行时自动选择后端。
 
 [English README](README.md)
 
@@ -13,18 +13,33 @@
 
 底层服务层在需要时由 CLI 自动拉起和管理。
 
+## 支持矩阵
+
+### 宿主平台
+
+- 支持：macOS、Linux
+- 不支持：Windows
+
+### IDA 运行时策略
+
+- `IDA < 9.0`：不支持
+- `IDA 9.0 – 9.2`：走 `idat-compat`
+  也就是 `idat` + IDAPython 兼容路径。
+- `IDA 9.3+`：走 `native-linked`
+  也就是 vendored `idalib` 的原生路径。
+
+这个选择由 `probe-runtime` 在运行时决定。编译期仍然需要 IDA SDK，因为 vendored native 层要参与编译。
+
 当前有两类运行时后端：
 
-- `native-linked`
-  直接使用 vendored `idalib`，适用于能够安全 in-process 打开数据库的较新运行时。
 - `idat-compat`
-  使用 `idat` + IDAPython 做兼容层，专门处理旧运行时上 `open_database_quiet()` 会崩溃的问题。
-
-在当前分支里，像本机实测的 IDA 9.1 这类旧 9.x 运行时，会自动切到 `idat-compat`。
+  用于 IDA 9.0-9.2，通过 `idat` + IDAPython 工作。
+- `native-linked`
+  用于 IDA 9.3+，直接走 vendored `idalib`。
 
 ## 当前已经可用的能力
 
-在实测的本机 IDA 9.1 环境中，`ida-cli` 已经可以：
+在支持的 IDA 9.x 运行时上，`ida-cli` 目前已经可以：
 
 - 打开原始二进制并复用缓存数据库
 - 列函数、按名字解析函数
@@ -76,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/ins
 git clone https://github.com/cpkt9762/ida-cli.git
 cd ida-cli
 
-export IDADIR="/path/to/ida/Contents/MacOS"
+export IDADIR="/path/to/ida"
 export IDASDKDIR="/path/to/ida-sdk"
 
 cargo build --bin ida-cli
@@ -97,10 +112,14 @@ cargo build --bin ida-cli
 ./target/debug/ida-cli probe-runtime
 ```
 
-在当前 9.1 环境中的示例输出：
+后端选择的示例输出：
 
 ```json
 {"runtime":{"major":9,"minor":0,"build":250226},"backend":"idat-compat","supported":true,"reason":null}
+```
+
+```json
+{"runtime":{"major":9,"minor":3,"build":260213},"backend":"native-linked","supported":true,"reason":null}
 ```
 
 ### 安装 skill
@@ -131,6 +150,7 @@ npx -y skills add https://github.com/cpkt9762/ida-cli --skill ida-cli --agent co
 
 - Rust 1.77+
 - LLVM/Clang
+- macOS 或 Linux 宿主机
 - 通过 `IDADIR` 指定 IDA 安装目录
 - 通过 `IDASDKDIR` 或 `IDALIB_SDK` 指定 IDA SDK
 
@@ -141,13 +161,13 @@ SDK 路径支持两种布局：
 
 ## 运行时说明
 
-### `native-linked`
-
-这是较新的原生后端，直接链接 vendored `idalib`。
-
 ### `idat-compat`
 
-这是旧运行时兼容后端。它通过 `idat` 启动批处理脚本，跑 IDAPython，把结构化结果返回给 router。这样可以避开旧运行时上会直接把 worker 打崩的原生开库路径。
+这是 IDA 9.0-9.2 的兼容后端。它通过 `idat` 启动批处理脚本，跑 IDAPython，把结构化结果返回给 CLI 运行时。
+
+### `native-linked`
+
+这是 IDA 9.3+ 的原生后端，直接链接 vendored `idalib`。
 
 ### 缓存和本地运行时路径
 
@@ -163,7 +183,7 @@ SDK 路径支持两种布局：
 当前工作流行为：
 
 - `master` 上的 push / pull request 会跑校验
-- 打 tag，例如 `v0.9.3`，会构建 Linux / macOS / Windows 的 release 资产
+- 打 tag，例如 `v0.9.3`，会构建 Linux / macOS 的 release 资产
 - release 会附带 `install.sh` 和各平台压缩包
 
 release 里的二进制是用 SDK stub 构建出来的；真正启动时，安装器生成的 launcher 会优先通过 `IDADIR` 或常见安装路径去解析你本机的 IDA 运行时。
