@@ -73,7 +73,8 @@ Within this skill, `scripts/ida-cli.sh` is the single entrypoint for install, do
 
 ### Key Principles
 
-- **F5 first, disasm second (HARD RULE)** — Always decompile before dropping to disassembly. Switch to disassembly only when decompilation fails, times out, or clearly lies.
+- **F5 first, disasm second (HARD RULE)** — Always attempt decompilation once before dropping to disassembly.
+- **10-second F5 gate (HARD RULE)** — If a decompilation attempt clearly fails, or if F5 / `decompile_function` stalls for more than 10 seconds, treat the target as currently non-decompilable and likely heavily obfuscated.
 - **Rename as you go (HARD RULE)** — Rename every function immediately after understanding its purpose. Do not keep a backlog of `sub_XXXXX` names.
 - **Iterate aggressively** — F5 → apply types → rename → F5 again → validate new offsets → repeat.
 - **Treat constants literally** — If IDA shows `0x6E`, write `110` until you have evidence for higher-level meaning.
@@ -85,8 +86,19 @@ Within this skill, `scripts/ida-cli.sh` is the single entrypoint for install, do
 Drop to disassembly when:
 
 - F5 errors out
-- F5 times out on a very large function
+- F5 or `decompile_function` takes longer than 10 seconds
 - The pseudocode shows obvious artifacts
+
+When any of the above happens, do **not** keep retrying decompilation in a loop. Assume the function is currently too obfuscated, flattened, or otherwise hostile to the decompiler. Move the investigation down to the disassembly layer and only retry F5 after the underlying blockers are understood or removed.
+
+Recommended response after the 10-second gate triggers:
+
+1. Stop repeated decompilation attempts.
+2. Work from disassembly and basic blocks.
+3. Recover control flow manually with xrefs, callgraph, and instruction searches.
+4. Rename, comment, and apply types from disassembly evidence.
+5. Patch or simplify only when you have a clear reason.
+6. Retry decompilation after the function is cleaner or better understood.
 
 Common decompiler lies:
 
@@ -313,6 +325,17 @@ Then retry the CLI call and let it restart automatically.
 5. `search_instruction_operands`
 6. Compare operand order and widths
 
+### Workflow 3b: Obfuscation Triage After F5 Failure
+
+If decompilation fails immediately or exceeds the 10-second gate:
+
+1. Stop retrying F5.
+2. Use `disassemble-function-at` or `disassemble-function` for the full body.
+3. Build control-flow understanding from basic blocks, xrefs, and callgraph edges.
+4. Mark dispatcher branches, opaque predicates, and flattening state variables.
+5. Rename symbols and annotate intent directly from disassembly.
+6. Retry decompilation only after meaningful progress has been made at the assembly level.
+
 ### Workflow 4: Error Code Mapping
 
 1. Search immediate values
@@ -371,9 +394,11 @@ When ASLR is active, address-based debug operations must use rebased runtime add
 
 If decompilation fails:
 
-- use `get_pseudocode_at` on a smaller range
-- fall back to disassembly
-- split the problem with `build_callgraph`
+- if the failure is explicit, or if the decompiler stalls past 10 seconds, classify it as a strong-obfuscation case
+- stop repeated F5 attempts
+- use `get_pseudocode_at` only for narrow, already-promising ranges
+- move to disassembly, basic blocks, xrefs, and callgraph work
+- retry decompilation only after the function has been partially untangled
 
 ### Incomplete Auto Analysis
 

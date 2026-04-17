@@ -21,6 +21,12 @@ ida-cli --path <file> disassemble-function-at --address 0x1000 --count 200
 ida-cli --path <file> batch-decompile --addresses "0x1000,0x2000,0x3000"
 ```
 
+Rule of thumb:
+
+- Attempt decompilation once.
+- If it clearly fails, or behaves like a hard stall for more than 10 seconds, treat the function as currently non-decompilable.
+- At that point switch to disassembly-first analysis until the function is better understood or simplified.
+
 ## Call Graph and Cross-References
 
 ```bash
@@ -132,3 +138,4 @@ The CLI also exposes the debugger command family for process start, attach, brea
 - Raw PE / ELF / Mach-O inputs are analyzed and cached automatically.
 - Little-endian byte order matters for byte-pattern searches.
 - Prefer ordinary subcommands over raw JSON whenever possible.
+- Do not keep hammering `decompile-function` on a strongly obfuscated function. Use disassembly when the 10-second gate or explicit failure condition triggers.
