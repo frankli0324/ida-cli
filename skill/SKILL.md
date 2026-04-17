@@ -100,6 +100,17 @@ Recommended response after the 10-second gate triggers:
 5. Patch or simplify only when you have a clear reason.
 6. Retry decompilation after the function is cleaner or better understood.
 
+Common "stop F5 and switch to disassembly" signals:
+
+- one dispatcher block dominates the whole function
+- heavy indirect branching or computed jumps
+- obvious flattening state variables
+- VM-like decode-dispatch-execute loops
+- opaque predicates with constant-looking outcomes
+- exception-driven or CFG-breaking control flow
+
+For a dedicated playbook, see [obfuscation-triage.md](references/obfuscation-triage.md).
+
 Common decompiler lies:
 
 | Symptom | Pseudocode | Real instruction pattern |
@@ -336,6 +347,21 @@ If decompilation fails immediately or exceeds the 10-second gate:
 5. Rename symbols and annotate intent directly from disassembly.
 6. Retry decompilation only after meaningful progress has been made at the assembly level.
 
+### Workflow 3c: Strong Obfuscation Signals
+
+If you see any of these, move immediately into disassembly-first mode:
+
+1. one central block repeatedly dispatches on a state variable
+2. most edges return to the same controller block
+3. branch targets are computed indirectly
+4. the function looks like a bytecode interpreter or handler VM
+5. branches rely on opaque arithmetic that does not simplify cleanly in pseudocode
+6. exception flow or anti-analysis logic makes the decompiler unstable
+
+Use the dedicated reference page:
+
+- [obfuscation-triage.md](references/obfuscation-triage.md)
+
 ### Workflow 4: Error Code Mapping
 
 1. Search immediate values
@@ -434,6 +460,7 @@ Load only the reference that matches the current task. Do not read them all by d
 | Reference | Use when |
 |---|---|
 | [cli-tool-reference.md](references/cli-tool-reference.md) | CLI command patterns and capability lookup |
+| [obfuscation-triage.md](references/obfuscation-triage.md) | F5 failure, flattening, VM handlers, opaque predicates, disassembly-first work |
 | [counterfactual-patch.md](references/counterfactual-patch.md) | counterfactual patching workflows |
 | [headless-api.md](references/headless-api.md) | headless IDA execution and API choice |
 | [idapython-cheatsheet.md](references/idapython-cheatsheet.md) | writing IDAPython scripts |
