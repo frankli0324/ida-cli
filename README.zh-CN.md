@@ -49,17 +49,17 @@
 推荐直接用安装脚本。它会优先拉取最新 release；如果当前没有可用二进制资产，也可以回退到本地源码构建。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/install.sh | bash -s -- --add-path
+curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/install.sh | bash -s -- --add-path
 ```
 
 常见变体：
 
 ```bash
 # 安装指定版本
-curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/install.sh | bash -s -- --tag v0.9.3 --add-path
+curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/install.sh | bash -s -- --tag v0.9.3 --add-path
 
 # 直接从分支/提交源码构建
-curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/install.sh | bash -s -- --ref master --build-from-source --add-path
+curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/install.sh | bash -s -- --ref master --build-from-source --add-path
 ```
 
 说明：
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/inst
 ### 从源码构建
 
 ```bash
-git clone https://github.com/gmh5225/ida-cli.git
+git clone https://github.com/cpkt9762/ida-cli.git
 cd ida-cli
 
 export IDADIR="/path/to/ida/Contents/MacOS"
@@ -108,10 +108,10 @@ cargo build --bin ida-cli
 
 ```bash
 # 查看这个仓库暴露出来的 skill
-npx -y skills add https://github.com/gmh5225/ida-cli --list
+npx -y skills add https://github.com/cpkt9762/ida-cli --list
 
 # 给 Codex 安装 ida skill
-npx -y skills add https://github.com/gmh5225/ida-cli --skill ida --agent codex --yes --global
+npx -y skills add https://github.com/cpkt9762/ida-cli --skill ida --agent codex --yes --global
 ```
 
 这条链路我已经本地验证过，CLI 能正确识别 `skill/SKILL.md` 里的 `ida`，并安装到 `~/.agents/skills/ida`。

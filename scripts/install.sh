@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${IDA_CLI_REPO:-gmh5225/ida-cli}"
+REPO="${IDA_CLI_REPO:-cpkt9762/ida-cli}"
 DEFAULT_REF="${IDA_CLI_DEFAULT_REF:-master}"
 BIN_DIR="${IDA_CLI_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 INSTALL_ROOT="${IDA_CLI_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/ida-cli}"
@@ -30,9 +30,9 @@ Options:
   --help                 Show this message
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/install.sh | bash -s -- --add-path
-  curl -fsSL https://raw.githubusercontent.com/gmh5225/ida-cli/master/scripts/install.sh | bash -s -- --tag v0.9.3
+  curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/install.sh | bash -s -- --add-path
+  curl -fsSL https://raw.githubusercontent.com/cpkt9762/ida-cli/master/scripts/install.sh | bash -s -- --tag v0.9.3
 EOF
 }
 
