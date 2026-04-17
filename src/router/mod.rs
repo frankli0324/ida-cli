@@ -90,6 +90,7 @@ pub struct RouterStatus {
     pub max_pending_per_worker: usize,
     pub max_concurrent_spawns: usize,
     pub runtime_probe: Option<RuntimeProbeResult>,
+    pub backend_counts: HashMap<String, usize>,
     pub workers: Vec<WorkerStatus>,
     pub idb_cache: crate::idb_store::IdbStoreStats,
     pub response_cache: crate::server::response_cache::ResponseCacheStats,
@@ -255,10 +256,46 @@ impl RouterState {
             "<pending>", canonical_path, backend, runtime
         );
 
+        loop {
+            let maybe_evict = {
+                let inner = self.inner.lock().await;
+                if inner.workers.len() < self.config.max_workers {
+                    None
+                } else {
+                    inner
+                        .workers
+                        .iter()
+                        .filter(|(handle, worker)| {
+                            let ref_count =
+                                inner.ref_tokens.get(*handle).map(|set| set.len()).unwrap_or(0);
+                            ref_count == 0
+                                && worker.pending.is_empty()
+                                && inner.active.as_deref() != Some(handle.as_str())
+                        })
+                        .min_by_key(|(_, worker)| worker.last_active)
+                        .map(|(handle, _)| handle.clone())
+                }
+            };
+
+            match maybe_evict {
+                Some(handle) => {
+                    warn!(
+                        handle = %handle,
+                        max_workers = self.config.max_workers,
+                        "worker limit reached, evicting oldest idle worker"
+                    );
+                    self.close_worker(&handle)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to evict idle worker: {e}"))?;
+                }
+                None => break,
+            }
+        }
+
         let mut inner = self.inner.lock().await;
         if inner.workers.len() >= self.config.max_workers {
             return Err(anyhow::anyhow!(
-                "worker limit reached ({})",
+                "worker limit reached ({}) and no idle worker was evictable",
                 self.config.max_workers
             ));
         }
@@ -630,20 +667,34 @@ impl RouterState {
     }
 
     pub async fn status_snapshot(&self) -> RouterStatus {
-        let runtime_probe = self.cached_probe.lock().await.clone();
+        let runtime_probe = match self.cached_probe.lock().await.clone() {
+            Some(probe) => Some(probe),
+            None => {
+                let exe_path = {
+                    let inner = self.inner.lock().await;
+                    inner.exe_path.clone()
+                };
+                self.probe_worker_backend(&exe_path).await.ok()
+            }
+        };
         let inner = self.inner.lock().await;
+        let mut backend_counts: HashMap<String, usize> = HashMap::new();
         let workers = inner
             .workers
             .iter()
-            .map(|(handle, worker)| WorkerStatus {
-                handle: handle.clone(),
-                backend: worker.backend.to_string(),
-                pid: worker.child.id(),
-                open_path: worker.open_path.as_ref().map(|p| p.display().to_string()),
-                pending_requests: worker.pending.len(),
-                ref_count: inner.ref_tokens.get(handle).map(|s| s.len()).unwrap_or(0),
-                idle_secs: worker.last_active.elapsed().as_secs(),
-                active: inner.active.as_deref() == Some(handle.as_str()),
+            .map(|(handle, worker)| {
+                let backend_name = worker.backend.to_string();
+                *backend_counts.entry(backend_name.clone()).or_default() += 1;
+                WorkerStatus {
+                    handle: handle.clone(),
+                    backend: backend_name,
+                    pid: worker.child.id(),
+                    open_path: worker.open_path.as_ref().map(|p| p.display().to_string()),
+                    pending_requests: worker.pending.len(),
+                    ref_count: inner.ref_tokens.get(handle).map(|s| s.len()).unwrap_or(0),
+                    idle_secs: worker.last_active.elapsed().as_secs(),
+                    active: inner.active.as_deref() == Some(handle.as_str()),
+                }
             })
             .collect();
 
@@ -654,6 +705,7 @@ impl RouterState {
             max_pending_per_worker: self.config.max_pending_per_worker,
             max_concurrent_spawns: self.config.max_concurrent_spawns,
             runtime_probe,
+            backend_counts,
             workers,
             idb_cache: crate::idb_store::IdbStore::new().stats(),
             response_cache: crate::server::response_cache::stats(),

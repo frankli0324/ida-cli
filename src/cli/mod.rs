@@ -5,8 +5,10 @@ use crate::router::protocol::{RpcRequest, RpcResponse};
 use clap::{Parser, Subcommand};
 use format::OutputMode;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::UnixStream;
+use tokio::sync::Semaphore;
 
 #[derive(Parser)]
 pub struct CliArgs {
@@ -63,6 +65,11 @@ pub enum CliCommand {
     },
     ListSegments,
     Prewarm,
+    PrewarmMany {
+        list_file: String,
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+    },
     Close,
     Status,
     Shutdown,
@@ -93,6 +100,9 @@ pub async fn run(args: CliArgs) -> anyhow::Result<()> {
 
     match args.command {
         CliCommand::Pipe => run_pipe(&socket_path, args.path.as_deref(), &output_mode).await,
+        CliCommand::PrewarmMany { list_file, jobs } => {
+            run_prewarm_many(&socket_path, &list_file, jobs.max(1), &output_mode, timeout).await
+        }
         CliCommand::Raw { json_str } => {
             let req = complete_envelope(&json_str, 1)?;
             let resp = send_request(&socket_path, &req, timeout).await?;
@@ -159,6 +169,7 @@ fn build_rpc_params(cmd: &CliCommand, path: Option<&str>) -> (String, serde_json
         CliCommand::Close => "close",
         CliCommand::Status => "status",
         CliCommand::Shutdown => "shutdown",
+        CliCommand::PrewarmMany { .. } => unreachable!(),
         _ => unreachable!(),
     };
 
@@ -227,6 +238,66 @@ async fn send_request(
     }
 
     serde_json::from_str(line.trim()).map_err(|e| anyhow::anyhow!("Invalid response: {e}"))
+}
+
+async fn run_prewarm_many(
+    socket_path: &PathBuf,
+    list_file: &str,
+    jobs: usize,
+    output_mode: &OutputMode,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(list_file)?;
+    let paths: Vec<String> = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect();
+
+    let semaphore = Arc::new(Semaphore::new(jobs));
+    let mut handles = Vec::new();
+
+    for (idx, path) in paths.iter().enumerate() {
+        let socket_path = socket_path.clone();
+        let path = path.clone();
+        let semaphore = semaphore.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.expect("semaphore closed");
+            let req = RpcRequest::new(
+                format!("prewarm-{idx}"),
+                "prewarm",
+                serde_json::json!({ "path": path }),
+            );
+            let resp = send_request(&socket_path, &req, timeout).await;
+            (path, resp)
+        }));
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        let (path, resp) = handle.await?;
+        match resp {
+            Ok(response) => {
+                let value = if let Some(error) = response.error {
+                    serde_json::json!({ "path": path, "ok": false, "error": error.message })
+                } else {
+                    serde_json::json!({ "path": path, "ok": true, "result": response.result })
+                };
+                results.push(value);
+            }
+            Err(err) => {
+                results.push(serde_json::json!({ "path": path, "ok": false, "error": err.to_string() }));
+            }
+        }
+    }
+
+    let output = serde_json::json!({
+        "count": results.len(),
+        "results": results,
+    });
+    println!("{}", format::format_response(output_mode, "prewarm_many", &output));
+    Ok(())
 }
 
 fn handle_response(resp: &RpcResponse, method: &str, mode: &OutputMode) -> anyhow::Result<()> {
