@@ -285,8 +285,22 @@ where
                     .get("task_params")
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
+                let federate = value
+                    .get("federate")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 let resp = match (path, method) {
+                    (Some(path), Some(method)) if federate => match router
+                        .enqueue_federated_task(path, method, params, tenant_id, priority, dedupe_key)
+                        .await
+                    {
+                        Ok(value) => json_response(StatusCode::OK, value),
+                        Err(err) => json_response(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            serde_json::json!({"error": err.to_string()}),
+                        ),
+                    },
                     (Some(path), Some(method)) => match router
                         .enqueue_route_task(path, method, params, tenant_id, priority, dedupe_key)
                         .await
@@ -326,6 +340,29 @@ where
                         }
                     };
                 let value = router.register_federation_node(node).await;
+                return Ok(json_response(StatusCode::OK, value));
+            }
+
+            if req.method() == hyper::http::Method::POST && path == "/federationz/heartbeat" {
+                let body = match req.into_body().collect().await {
+                    Ok(body) => body.to_bytes(),
+                    Err(err) => {
+                        return Ok(json_response(
+                            StatusCode::BAD_REQUEST,
+                            serde_json::json!({"error": format!("invalid request body: {err}")}),
+                        ));
+                    }
+                };
+                let node: federation::FederationNodeConfig = match serde_json::from_slice(&body) {
+                    Ok(node) => node,
+                    Err(err) => {
+                        return Ok(json_response(
+                            StatusCode::BAD_REQUEST,
+                            serde_json::json!({"error": format!("invalid federation heartbeat json: {err}")}),
+                        ));
+                    }
+                };
+                let value = router.heartbeat_federation_node(node).await;
                 return Ok(json_response(StatusCode::OK, value));
             }
 

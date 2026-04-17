@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::time::Instant;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +14,12 @@ pub struct FederationNodeConfig {
     pub weight: u32,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub tenant_allow: Vec<String>,
+    #[serde(default)]
+    pub node_id: Option<String>,
 }
 
 fn default_weight() -> u32 {
@@ -28,6 +35,11 @@ pub struct FederationNodeStatus {
     pub name: String,
     pub url: String,
     pub enabled: bool,
+    pub source: String,
+    pub last_seen_iso: Option<String>,
+    pub capabilities: Vec<String>,
+    pub tenant_allow: Vec<String>,
+    pub node_id: Option<String>,
     pub healthy: bool,
     pub ready: bool,
     pub worker_count: Option<u64>,
@@ -53,6 +65,30 @@ pub struct RemoteTaskStatus {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct FederationNodeRecord {
+    pub config: FederationNodeConfig,
+    pub source: String,
+    pub last_seen_at: Option<Instant>,
+    pub last_seen_iso: Option<String>,
+}
+
+impl FederationNodeRecord {
+    pub fn new(config: FederationNodeConfig, source: impl Into<String>) -> Self {
+        Self {
+            config,
+            source: source.into(),
+            last_seen_at: None,
+            last_seen_iso: None,
+        }
+    }
+
+    pub fn touch(&mut self, iso: String) {
+        self.last_seen_at = Some(Instant::now());
+        self.last_seen_iso = Some(iso);
+    }
+}
+
 pub fn load_nodes_from_env() -> Vec<FederationNodeConfig> {
     let path = match std::env::var("IDA_CLI_FEDERATION_CONFIG") {
         Ok(path) => path,
@@ -61,10 +97,10 @@ pub fn load_nodes_from_env() -> Vec<FederationNodeConfig> {
     load_nodes(&path).unwrap_or_default()
 }
 
-pub fn load_node_map_from_env() -> std::collections::HashMap<String, FederationNodeConfig> {
+pub fn load_node_map_from_env() -> std::collections::HashMap<String, FederationNodeRecord> {
     load_nodes_from_env()
         .into_iter()
-        .map(|node| (node.name.clone(), node))
+        .map(|node| (node.name.clone(), FederationNodeRecord::new(node, "static")))
         .collect()
 }
 
@@ -74,21 +110,30 @@ pub fn load_nodes(path: &str) -> anyhow::Result<Vec<FederationNodeConfig>> {
     Ok(nodes)
 }
 
-pub fn probe_nodes(nodes: &[FederationNodeConfig]) -> Vec<FederationNodeStatus> {
-    nodes.iter().map(probe_node).collect()
+pub fn probe_nodes(nodes: &[FederationNodeRecord]) -> Vec<FederationNodeStatus> {
+    nodes.iter().map(probe_record).collect()
 }
 
-pub fn choose_ready_node(nodes: &[FederationNodeConfig]) -> Option<FederationNodeConfig> {
-    choose_ready_nodes(nodes).into_iter().next()
+pub fn choose_ready_node(
+    nodes: &[FederationNodeRecord],
+    method: Option<&str>,
+    tenant: Option<&str>,
+) -> Option<FederationNodeConfig> {
+    choose_ready_nodes(nodes, method, tenant).into_iter().next()
 }
 
-pub fn choose_ready_nodes(nodes: &[FederationNodeConfig]) -> Vec<FederationNodeConfig> {
+pub fn choose_ready_nodes(
+    nodes: &[FederationNodeRecord],
+    method: Option<&str>,
+    tenant: Option<&str>,
+) -> Vec<FederationNodeConfig> {
     let mut ready: Vec<(FederationNodeConfig, FederationNodeStatus)> = nodes
         .iter()
-        .filter(|node| node.enabled)
+        .filter(|node| node.config.enabled)
+        .filter(|node| supports_request(&node.config, method, tenant))
         .filter_map(|node| {
-            let status = probe_node(node);
-            status.ready.then_some((node.clone(), status))
+            let status = probe_record(node);
+            status.ready.then_some((node.config.clone(), status))
         })
         .collect();
     ready.sort_by(|(lhs_node, lhs_status), (rhs_node, rhs_status)| {
@@ -134,12 +179,35 @@ pub fn fetch_remote_task(
     })
 }
 
-fn probe_node(node: &FederationNodeConfig) -> FederationNodeStatus {
+pub fn supports_request(
+    node: &FederationNodeConfig,
+    method: Option<&str>,
+    tenant: Option<&str>,
+) -> bool {
+    let tenant = tenant.unwrap_or("default");
+    let tenant_ok = node.tenant_allow.is_empty() || node.tenant_allow.iter().any(|t| t == tenant);
+    let method_ok = match method {
+        None => true,
+        Some(method) => {
+            node.capabilities.is_empty()
+                || node.capabilities.iter().any(|cap| cap == "*" || cap == method)
+        }
+    };
+    tenant_ok && method_ok
+}
+
+pub fn probe_record(record: &FederationNodeRecord) -> FederationNodeStatus {
+    let node = &record.config;
     if !node.enabled {
         return FederationNodeStatus {
             name: node.name.clone(),
             url: node.url.clone(),
             enabled: false,
+            source: record.source.clone(),
+            last_seen_iso: record.last_seen_iso.clone(),
+            capabilities: node.capabilities.clone(),
+            tenant_allow: node.tenant_allow.clone(),
+            node_id: node.node_id.clone(),
             healthy: false,
             ready: false,
             worker_count: None,
@@ -158,6 +226,11 @@ fn probe_node(node: &FederationNodeConfig) -> FederationNodeStatus {
                 name: node.name.clone(),
                 url: node.url.clone(),
                 enabled: true,
+                source: record.source.clone(),
+                last_seen_iso: record.last_seen_iso.clone(),
+                capabilities: node.capabilities.clone(),
+                tenant_allow: node.tenant_allow.clone(),
+                node_id: node.node_id.clone(),
                 healthy: false,
                 ready: false,
                 worker_count: None,
@@ -175,6 +248,11 @@ fn probe_node(node: &FederationNodeConfig) -> FederationNodeStatus {
             name: node.name.clone(),
             url: node.url.clone(),
             enabled: true,
+            source: record.source.clone(),
+            last_seen_iso: record.last_seen_iso.clone(),
+            capabilities: node.capabilities.clone(),
+            tenant_allow: node.tenant_allow.clone(),
+            node_id: node.node_id.clone(),
             healthy: false,
             ready: false,
             worker_count: None,
@@ -193,6 +271,11 @@ fn probe_node(node: &FederationNodeConfig) -> FederationNodeStatus {
                 name: node.name.clone(),
                 url: node.url.clone(),
                 enabled: true,
+                source: record.source.clone(),
+                last_seen_iso: record.last_seen_iso.clone(),
+                capabilities: node.capabilities.clone(),
+                tenant_allow: node.tenant_allow.clone(),
+                node_id: node.node_id.clone(),
                 healthy: false,
                 ready: false,
                 worker_count: None,
@@ -237,6 +320,11 @@ fn probe_node(node: &FederationNodeConfig) -> FederationNodeStatus {
         name: node.name.clone(),
         url: node.url.clone(),
         enabled: true,
+        source: record.source.clone(),
+        last_seen_iso: record.last_seen_iso.clone(),
+        capabilities: node.capabilities.clone(),
+        tenant_allow: node.tenant_allow.clone(),
+        node_id: node.node_id.clone(),
         healthy,
         ready,
         worker_count,
