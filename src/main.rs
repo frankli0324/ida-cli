@@ -16,7 +16,7 @@ use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use ida_mcp::ida::{IdaBackend, RawDatabaseOptions, WorkerBackendKind};
 use ida_mcp::{
-    disasm::generate_disasm_line, expand_path, ida, rpc_dispatch, DbInfo, FunctionInfo,
+    disasm::generate_disasm_line, expand_path, federation, ida, rpc_dispatch, DbInfo, FunctionInfo,
     IdaMcpServer, IdaWorker, ServerMode,
 };
 use idalib::{Address, IDB};
@@ -193,6 +193,14 @@ where
                         .unwrap_or_else(|_| serde_json::json!({"error": "status serialization failed"}));
                     return Ok(json_response(StatusCode::OK, value));
                 }
+                if path == "/federationz" {
+                    let nodes = router.federation_nodes_snapshot().await;
+                    let statuses = crate::federation::probe_nodes(&nodes);
+                    return Ok(json_response(
+                        StatusCode::OK,
+                        serde_json::json!({ "nodes": statuses }),
+                    ));
+                }
                 if path == "/metrics" {
                     let status = router.status_snapshot().await;
                     return Ok(metrics_response(&status));
@@ -321,6 +329,59 @@ where
                     ),
                 };
                 return Ok(resp);
+            }
+
+            if req.method() == hyper::http::Method::POST && path == "/federationz/register" {
+                let body = match req.into_body().collect().await {
+                    Ok(body) => body.to_bytes(),
+                    Err(err) => {
+                        return Ok(json_response(
+                            StatusCode::BAD_REQUEST,
+                            serde_json::json!({"error": format!("invalid request body: {err}")}),
+                        ));
+                    }
+                };
+                let node: crate::federation::FederationNodeConfig =
+                    match serde_json::from_slice(&body) {
+                        Ok(node) => node,
+                        Err(err) => {
+                            return Ok(json_response(
+                                StatusCode::BAD_REQUEST,
+                                serde_json::json!({"error": format!("invalid federation node json: {err}")}),
+                            ));
+                        }
+                    };
+                let value = router.register_federation_node(node).await;
+                return Ok(json_response(StatusCode::OK, value));
+            }
+
+            if req.method() == hyper::http::Method::POST && path == "/federationz/unregister" {
+                let body = match req.into_body().collect().await {
+                    Ok(body) => body.to_bytes(),
+                    Err(err) => {
+                        return Ok(json_response(
+                            StatusCode::BAD_REQUEST,
+                            serde_json::json!({"error": format!("invalid request body: {err}")}),
+                        ));
+                    }
+                };
+                let value: serde_json::Value = match serde_json::from_slice(&body) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return Ok(json_response(
+                            StatusCode::BAD_REQUEST,
+                            serde_json::json!({"error": format!("invalid json: {err}")}),
+                        ));
+                    }
+                };
+                let Some(name) = value.get("name").and_then(|v| v.as_str()) else {
+                    return Ok(json_response(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({"error": "missing federation node name"}),
+                    ));
+                };
+                let value = router.unregister_federation_node(name).await;
+                return Ok(json_response(StatusCode::OK, value));
             }
 
             inner.call(req).await

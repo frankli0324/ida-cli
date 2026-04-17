@@ -4,6 +4,8 @@ pub mod format;
 use crate::router::protocol::{RpcRequest, RpcResponse};
 use clap::{Parser, Subcommand};
 use format::OutputMode;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -110,6 +112,16 @@ pub enum CliCommand {
     CancelTask {
         task_id: String,
     },
+    FederationList,
+    FederationRegister {
+        name: String,
+        url: String,
+        #[arg(long, default_value_t = 1)]
+        weight: u32,
+    },
+    FederationUnregister {
+        name: String,
+    },
     Close,
     Status,
     Shutdown,
@@ -205,6 +217,34 @@ pub async fn run(args: CliArgs) -> anyhow::Result<()> {
             let resp = send_request(&socket_path, &req, timeout).await?;
             handle_response(&resp, "cancel_task", &output_mode)
         }
+        CliCommand::FederationList => {
+            let body = reqwest_blocking_like("GET", &admin_url("/federationz"), None)?;
+            println!("{body}");
+            Ok(())
+        }
+        CliCommand::FederationRegister { name, url, weight } => {
+            let body = reqwest_blocking_like(
+                "POST",
+                &admin_url("/federationz/register"),
+                Some(serde_json::json!({
+                    "name": name,
+                    "url": url,
+                    "weight": weight,
+                    "enabled": true,
+                })),
+            )?;
+            println!("{body}");
+            Ok(())
+        }
+        CliCommand::FederationUnregister { name } => {
+            let body = reqwest_blocking_like(
+                "POST",
+                &admin_url("/federationz/unregister"),
+                Some(serde_json::json!({ "name": name })),
+            )?;
+            println!("{body}");
+            Ok(())
+        }
         CliCommand::Raw { json_str } => {
             let req = complete_envelope(&json_str, 1)?;
             let resp = send_request(&socket_path, &req, timeout).await?;
@@ -294,12 +334,67 @@ fn build_rpc_params(
         CliCommand::Enqueue { .. }
         | CliCommand::TaskStatus { .. }
         | CliCommand::ListTasks
-        | CliCommand::CancelTask { .. } => unreachable!(),
+        | CliCommand::CancelTask { .. }
+        | CliCommand::FederationList
+        | CliCommand::FederationRegister { .. }
+        | CliCommand::FederationUnregister { .. } => unreachable!(),
         CliCommand::PrewarmMany { .. } => unreachable!(),
         _ => unreachable!(),
     };
 
     (method.to_string(), serde_json::Value::Object(params))
+}
+
+fn admin_url(path: &str) -> String {
+    let base = std::env::var("IDA_CLI_ADMIN_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9876".to_string());
+    format!("{}{}", base.trim_end_matches('/'), path)
+}
+
+fn reqwest_blocking_like(
+    method: &str,
+    url: &str,
+    body: Option<serde_json::Value>,
+) -> anyhow::Result<String> {
+    let uri: hyper::Uri = url.parse()?;
+    let host = uri
+        .host()
+        .ok_or_else(|| anyhow::anyhow!("missing host in url"))?;
+    let port = uri.port_u16().unwrap_or(80);
+    let path = uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let mut stream = TcpStream::connect((host, port))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(5)))?;
+
+    let body_bytes = body
+        .map(|value| serde_json::to_vec(&value))
+        .transpose()?
+        .unwrap_or_default();
+
+    let mut request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAccept: application/json\r\n"
+    );
+    if !body_bytes.is_empty() {
+        request.push_str("Content-Type: application/json\r\n");
+        request.push_str(&format!("Content-Length: {}\r\n", body_bytes.len()));
+    }
+    request.push_str("\r\n");
+
+    stream.write_all(request.as_bytes())?;
+    if !body_bytes.is_empty() {
+        stream.write_all(&body_bytes)?;
+    }
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    let body = response
+        .split("\r\n\r\n")
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("invalid http response"))?;
+    Ok(body.to_string())
 }
 
 fn complete_envelope(raw: &str, seq: u64) -> anyhow::Result<RpcRequest> {

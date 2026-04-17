@@ -61,6 +61,13 @@ pub fn load_nodes_from_env() -> Vec<FederationNodeConfig> {
     load_nodes(&path).unwrap_or_default()
 }
 
+pub fn load_node_map_from_env() -> std::collections::HashMap<String, FederationNodeConfig> {
+    load_nodes_from_env()
+        .into_iter()
+        .map(|node| (node.name.clone(), node))
+        .collect()
+}
+
 pub fn load_nodes(path: &str) -> anyhow::Result<Vec<FederationNodeConfig>> {
     let data = fs::read_to_string(path)?;
     let nodes: Vec<FederationNodeConfig> = serde_json::from_str(&data)?;
