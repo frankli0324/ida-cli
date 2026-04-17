@@ -338,7 +338,7 @@ if [[ -n "\$IDA_RUNTIME_DIR" ]]; then
   esac
 fi
 
-exec "\$REAL_BIN" "\$@"
+exec -a ida-cli "\$REAL_BIN" "\$@"
 EOF
   chmod +x "$LAUNCHER"
 }
