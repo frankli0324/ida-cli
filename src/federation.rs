@@ -402,9 +402,22 @@ fn node_rank(node: &FederationNodeConfig, status: &FederationNodeStatus) -> f64 
     load + weight_bonus
 }
 
+fn connect_with_timeout(host: &str, port: u16, timeout: Duration) -> anyhow::Result<TcpStream> {
+    use std::net::ToSocketAddrs;
+    let mut last_err: Option<std::io::Error> = None;
+    for addr in (host, port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err
+        .map(anyhow::Error::from)
+        .unwrap_or_else(|| anyhow::anyhow!("no addresses resolved for {host}:{port}")))
+}
+
 fn fetch_json(host: &str, port: u16, path: &str) -> anyhow::Result<serde_json::Value> {
-    let addr = format!("{host}:{port}");
-    let mut stream = TcpStream::connect(addr)?;
+    let mut stream = connect_with_timeout(host, port, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let request =
@@ -420,8 +433,7 @@ fn fetch_json(host: &str, port: u16, path: &str) -> anyhow::Result<serde_json::V
 }
 
 fn post_json(host: &str, port: u16, path: &str, payload: &Value) -> anyhow::Result<Value> {
-    let addr = format!("{host}:{port}");
-    let mut stream = TcpStream::connect(addr)?;
+    let mut stream = connect_with_timeout(host, port, Duration::from_secs(5))?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let body = serde_json::to_vec(payload)?;

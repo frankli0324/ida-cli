@@ -493,7 +493,10 @@ impl RouterState {
         path: &str,
         tenant_id: Option<&str>,
     ) -> Result<(DbHandle, Option<String>), anyhow::Error> {
-        let canonical_path = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        // Expand `~/...` before canonicalising; see ensure_worker_with_ref_idb
+        // for the detailed rationale.
+        let expanded = crate::expand_path(path);
+        let canonical_path = std::fs::canonicalize(&expanded).unwrap_or(expanded);
         let tenant_id = Self::normalize_tenant(tenant_id);
         let worker_key = Self::worker_key(canonical_path.clone(), &tenant_id);
 
@@ -1236,10 +1239,15 @@ impl RouterState {
         let resolved = resolve_open_path(path);
         let open_path = resolved.open_path.as_deref().unwrap_or(path);
 
-        let canonical =
-            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
-        let canonical_open = std::fs::canonicalize(open_path)
-            .unwrap_or_else(|_| std::path::PathBuf::from(open_path));
+        // Expand `~/...` before canonicalising — `std::fs::canonicalize`
+        // does not do shell-style tilde expansion, so any client that
+        // passes `~/foo` would otherwise produce a literal `~/foo` key
+        // and a broken worker registry.
+        let expanded_path = crate::expand_path(path);
+        let expanded_open = crate::expand_path(open_path);
+        let canonical = std::fs::canonicalize(&expanded_path).unwrap_or(expanded_path);
+        let canonical_open =
+            std::fs::canonicalize(&expanded_open).unwrap_or(expanded_open);
         let worker_key = Self::worker_key(canonical.clone(), &tenant_id);
 
         let handle = {
@@ -2092,6 +2100,15 @@ impl RouterState {
                                 info!(
                                     "No workers remaining for {}s, server auto-exiting",
                                     grace.as_secs()
+                                );
+                                // Tidy up pid / unix socket / discovery file
+                                // so the next client does not hit a stale
+                                // `~/.ida/server.sock` or `/tmp/ida-cli.socket`.
+                                let _ = std::fs::remove_file(
+                                    crate::idb_store::pid_path(),
+                                );
+                                crate::server::socket_listener::cleanup_socket_files(
+                                    &crate::idb_store::socket_path(),
                                 );
                                 std::process::exit(0);
                             }

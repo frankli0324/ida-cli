@@ -436,7 +436,9 @@ fn dispatch_request(worker: &mut CompatWorker, req: &RpcRequest) -> RpcResponse 
                 .get("address")
                 .and_then(parse_address_value)
                 .ok_or_else(|| ToolError::InvalidAddress("missing address".to_string()));
-            let size = params["size"].as_u64().unwrap_or(0) as usize;
+            // Default size must match the native-linked backend (16) so both
+            // workers return the same slice when a caller omits `size`.
+            let size = params["size"].as_u64().unwrap_or(16) as usize;
             match addr {
                 Ok(addr) => worker.get_bytes(addr, size),
                 Err(err) => Err(err),

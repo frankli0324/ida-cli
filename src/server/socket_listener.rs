@@ -126,8 +126,12 @@ async fn dispatch_cli_request(
     match method {
         "close" => {
             let resp = if let Some(ref p) = path {
-                let canonical =
-                    std::fs::canonicalize(p).unwrap_or_else(|_| std::path::PathBuf::from(p));
+                // Match what ensure_worker_with_ref_idb does when it
+                // registers the worker: expand `~/...` first, then
+                // canonicalise. Otherwise `close --path ~/foo` would
+                // never hit a worker keyed on `/home/user/foo`.
+                let expanded = crate::expand_path(p);
+                let canonical = std::fs::canonicalize(&expanded).unwrap_or(expanded);
                 match router.close_by_path(&canonical, tenant_id.as_deref()).await {
                     Ok(()) => RpcResponse::ok(&req.id, serde_json::json!({"ok": true})),
                     Err(e) => RpcResponse::err(&req.id, -32000, e.to_string()),

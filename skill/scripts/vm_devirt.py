@@ -249,7 +249,7 @@ class Assembler:
                 enc, _ = self.ks.asm(ln, base + sum(sizes))
                 sizes.append(len(enc))
             except KsError as e:
-                raise RuntimeError(f"Keystone: '{ln}': {e}")
+                raise RuntimeError(f"Keystone: '{ln}': {e}") from e
         code = bytearray()
         addr = base
         for ln, sz in zip(lines, sizes):
@@ -1523,7 +1523,7 @@ class VMDevirtualizer:
         for va, val in rdata_dark.items():
             by_val.setdefault(val, []).append(va)
         propagated = 0
-        for val, slots in by_val.items():
+        for slots in by_val.values():
             names = [resolved[s] for s in slots if s in resolved]
             if names:
                 for s in slots:
@@ -2037,7 +2037,7 @@ class VMDevirtualizer:
                              (n_old + n_new + 1) * 20)
 
         patched = 0
-        for r, code, offset in func_code_list:
+        for r, _code, offset in func_code_list:
             devrt_va = new_va + offset
             vm_info = r["vm_entry"]
             jmp_raw = self._va_to_raw(vm_info["jmp"])
@@ -2100,7 +2100,7 @@ class VMDevirtualizer:
                     iat_by_slot[info["iat"]] = iat_va
 
         fixed = 0
-        for slot_va, dark_val in self._rdata_dark_slots.items():
+        for slot_va in self._rdata_dark_slots:
             raw = self._va_to_raw(slot_va)
             if raw is None or raw + 8 > len(data):
                 continue

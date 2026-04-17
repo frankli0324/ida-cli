@@ -421,7 +421,25 @@ fn reqwest_blocking_like(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
-    let mut stream = TcpStream::connect((host, port))?;
+    // Don't rely on the OS TCP timeout: a wrong `--socket` / admin URL would
+    // otherwise block the CLI for minutes.
+    let connect_timeout = std::time::Duration::from_secs(5);
+    let mut stream: Option<TcpStream> = None;
+    let mut last_err: Option<std::io::Error> = None;
+    use std::net::ToSocketAddrs;
+    for addr in (host, port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&addr, connect_timeout) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    let mut stream = stream
+        .ok_or_else(|| last_err
+            .map(anyhow::Error::from)
+            .unwrap_or_else(|| anyhow::anyhow!("no addresses resolved for {host}:{port}")))?;
     stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(5)))?;
 
