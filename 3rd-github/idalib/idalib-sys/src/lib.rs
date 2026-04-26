@@ -75,6 +75,7 @@ include_cpp! {
     #include "pro.h"
     #include "segment.hpp"
     #include "strlist.hpp"
+    #include "typeinf.hpp"
     #include "ua.hpp"
     #include "xref.hpp"
 
@@ -96,6 +97,14 @@ include_cpp! {
     generate!("is_data")
     generate!("is_code")
     generate!("get_flags")
+    generate!("patch_byte")
+    generate!("patch_word")
+    generate!("patch_dword")
+    generate!("patch_qword")
+    generate!("put_byte")
+    generate!("put_word")
+    generate!("put_dword")
+    generate!("put_qword")
 
     // entry
     generate!("get_entry")
@@ -386,6 +395,14 @@ include_cpp! {
     generate!("is_in_nlist")
     generate!("is_public_name")
     generate!("is_weak_name")
+    generate!("set_name")
+    generate!("del_global_name")
+    generate!("del_local_name")
+
+    // typeinf
+    generate!("get_ordinal_limit")
+    generate!("get_ordinal_count")
+    generate!("get_type_ordinal")
 }
 
 pub mod hexrays {
@@ -1241,7 +1258,10 @@ pub mod segment {
 }
 
 pub mod bytes {
-    pub use super::ffi::{flags64_t, get_flags, is_code, is_data};
+    pub use super::ffi::{
+        flags64_t, get_flags, is_code, is_data, patch_byte, patch_dword, patch_qword, patch_word,
+        put_byte, put_dword, put_qword, put_word,
+    };
     pub use super::ffix::{
         idalib_get_byte, idalib_get_bytes, idalib_get_dword, idalib_get_qword, idalib_get_word,
     };
@@ -1296,8 +1316,8 @@ pub mod nalt {
 
 pub mod name {
     pub use super::ffi::{
-        get_nlist_ea, get_nlist_idx, get_nlist_name, get_nlist_size, is_in_nlist, is_public_name,
-        is_weak_name,
+        del_global_name, del_local_name, get_nlist_ea, get_nlist_idx, get_nlist_name,
+        get_nlist_size, is_in_nlist, is_public_name, is_weak_name, set_name,
     };
 }
 
@@ -1486,4 +1506,8 @@ pub mod ida {
             Err(IDAError::GetVersion)
         }
     }
+}
+
+pub mod typeinf {
+    pub use super::ffi::{get_ordinal_count, get_ordinal_limit, get_type_ordinal};
 }
