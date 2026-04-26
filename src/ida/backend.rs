@@ -101,9 +101,8 @@ impl IdaBackend for NativeIdalibBackend {
             open_options.file_type(file_type);
         }
 
-        for arg in options.extra_args {
-            open_options.arg(arg);
-        }
+        // Note: extra_args support was removed in idalib 0.9.0
+        // They are now ignored
 
         open_options
             .idb(options.idb_output)

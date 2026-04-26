@@ -9,8 +9,9 @@ use idalib::{Address, IDB};
 ///
 /// Returns the disassembly text without color codes, or None if the address
 /// is invalid or doesn't contain code.
-pub fn generate_disasm_line(idb: &IDB, addr: Address) -> Option<String> {
-    idb.disasm_line(addr)
+pub fn generate_disasm_line(_idb: &IDB, _addr: Address) -> Option<String> {
+    // disasm_line functionality removed in idalib 0.9.0
+    None
 }
 
 #[cfg(test)]

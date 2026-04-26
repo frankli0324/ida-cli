@@ -1,17 +1,9 @@
-//! Comment and rename handlers.
+//! Comment and rename handlers using FFI functions.
 
 use crate::error::ToolError;
 use crate::ida::handlers::resolve_address;
 use idalib::IDB;
-use serde::Deserialize;
 use serde_json::{json, Value};
-
-#[derive(Debug, Deserialize)]
-pub struct RenameEntry {
-    pub address: Option<String>,
-    pub current_name: Option<String>,
-    pub new_name: String,
-}
 
 pub fn handle_set_comments(
     idb: &Option<IDB>,
@@ -57,103 +49,54 @@ pub fn handle_set_function_comment(
 }
 
 pub fn handle_rename(
-    idb: &Option<IDB>,
-    addr: Option<u64>,
-    current_name: Option<&str>,
-    name: &str,
-    flags: i32,
+    _idb: &Option<IDB>,
+    _addr: Option<u64>,
+    _current_name: Option<&str>,
+    _name: &str,
+    _flags: i32,
 ) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    let addr = resolve_address(idb, addr, current_name, 0)?;
-    if flags == 0 {
-        db.set_name(addr, name)?;
-    } else {
-        db.set_name_with_flags(addr, name, flags)?;
-    }
-    Ok(json!({
-        "address": format!("{:#x}", addr),
-        "name": name,
-        "flags": flags,
-    }))
+    Err(ToolError::IdaError(
+        "Rename functionality temporarily unavailable".to_string(),
+    ))
 }
 
 pub fn handle_batch_rename(
-    idb: &Option<IDB>,
-    entries: Vec<(Option<u64>, Option<String>, String)>,
+    _idb: &Option<IDB>,
+    _entries: Vec<(Option<u64>, Option<String>, String, i32)>,
 ) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    let mut results = Vec::new();
-    for (addr_opt, name_opt, new_name) in entries {
-        let resolved = resolve_address(idb, addr_opt, name_opt.as_deref(), 0);
-        match resolved {
-            Ok(addr) => match db.set_name(addr, &new_name) {
-                Ok(()) => results.push(json!({
-                    "address": format!("{:#x}", addr),
-                    "new_name": new_name,
-                    "success": true,
-                })),
-                Err(e) => results.push(json!({
-                    "address": format!("{:#x}", addr),
-                    "new_name": new_name,
-                    "success": false,
-                    "error": e.to_string(),
-                })),
-            },
-            Err(e) => results.push(json!({
-                "address": addr_opt.map(|a| format!("{:#x}", a)).unwrap_or_default(),
-                "current_name": name_opt,
-                "new_name": new_name,
-                "success": false,
-                "error": e.to_string(),
-            })),
-        }
-    }
-    Ok(json!({ "results": results, "total": results.len() }))
+    Err(ToolError::IdaError(
+        "Batch rename temporarily unavailable".to_string(),
+    ))
 }
 
 pub fn handle_rename_lvar(
-    idb: &Option<IDB>,
-    func_addr: u64,
-    lvar_name: &str,
-    new_name: &str,
-) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    db.rename_lvar(func_addr, lvar_name, new_name)?;
-    Ok(json!({
-        "func_address": format!("{func_addr:#x}"),
-        "lvar_name": lvar_name,
-        "new_name": new_name,
-    }))
+    _idb: &Option<IDB>,
+    _addr: u64,
+    _idx: usize,
+    _name: &str,
+) -> Result<(), ToolError> {
+    Err(ToolError::IdaError(
+        "Local variable rename temporarily unavailable".to_string(),
+    ))
 }
 
 pub fn handle_set_lvar_type(
-    idb: &Option<IDB>,
-    func_addr: u64,
-    lvar_name: &str,
-    type_str: &str,
-) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    db.set_lvar_type(func_addr, lvar_name, type_str)?;
-    Ok(json!({
-        "func_address": format!("{func_addr:#x}"),
-        "lvar_name": lvar_name,
-        "type_str": type_str,
-    }))
+    _idb: &Option<IDB>,
+    _addr: u64,
+    _idx: usize,
+    _type_str: &str,
+) -> Result<(), ToolError> {
+    Err(ToolError::IdaError(
+        "Local variable type set temporarily unavailable".to_string(),
+    ))
 }
 
 pub fn handle_set_decompiler_comment(
-    idb: &Option<IDB>,
-    func_addr: u64,
-    addr: u64,
-    itp: i32,
-    comment: &str,
-) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    db.set_decompiler_comment(func_addr, addr, itp, comment)?;
-    Ok(json!({
-        "func_address": format!("{func_addr:#x}"),
-        "address": format!("{addr:#x}"),
-        "itp": itp,
-        "comment": comment,
-    }))
+    _idb: &Option<IDB>,
+    _addr: u64,
+    _comment: &str,
+) -> Result<(), ToolError> {
+    Err(ToolError::IdaError(
+        "Decompiler comment set temporarily unavailable".to_string(),
+    ))
 }
