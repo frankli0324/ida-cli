@@ -74,7 +74,7 @@ pub fn handle_rename_lvar(
     _addr: u64,
     _idx: usize,
     _name: &str,
-) -> Result<(), ToolError> {
+) -> Result<Value, ToolError> {
     Err(ToolError::IdaError(
         "Local variable rename temporarily unavailable".to_string(),
     ))
@@ -85,7 +85,7 @@ pub fn handle_set_lvar_type(
     _addr: u64,
     _idx: usize,
     _type_str: &str,
-) -> Result<(), ToolError> {
+) -> Result<Value, ToolError> {
     Err(ToolError::IdaError(
         "Local variable type set temporarily unavailable".to_string(),
     ))
@@ -93,9 +93,9 @@ pub fn handle_set_lvar_type(
 
 pub fn handle_set_decompiler_comment(
     _idb: &Option<IDB>,
-    _addr: u64,
+    _func_addr: u64,
     _comment: &str,
-) -> Result<(), ToolError> {
+) -> Result<Value, ToolError> {
     Err(ToolError::IdaError(
         "Decompiler comment set temporarily unavailable".to_string(),
     ))

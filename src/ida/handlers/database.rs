@@ -3,21 +3,20 @@
 use crate::error::ToolError;
 use crate::expand_path;
 use crate::ida::backend::{native_backend, IdaBackend, RawDatabaseOptions};
-use crate::ida::handlers::analysis::build_analysis_status;
 use crate::ida::lock::{
     acquire_mcp_lock, clean_stale_mcp_lock, detect_db_lock, release_mcp_lock_file,
 };
-use crate::ida::types::{DbInfo, DebugInfoLoad};
+use crate::ida::types::{AnalysisStatus, DbInfo, DebugInfoLoad};
 use crate::idb_store::IdbStore;
 use idalib::IDB;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Build `DbInfo` from an open IDB.
 fn build_db_info(db: &IDB, path: &str, debug_info: Option<DebugInfoLoad>) -> DbInfo {
@@ -35,7 +34,13 @@ fn build_db_info(db: &IDB, path: &str, debug_info: Option<DebugInfoLoad>) -> DbI
         },
         function_count: db.function_count(),
         debug_info,
-        analysis_status: build_analysis_status(db),
+        analysis_status: AnalysisStatus {
+            auto_enabled: false,
+            auto_is_ok: false,
+            auto_state: "unknown".to_string(),
+            auto_state_id: -1,
+            analysis_running: false,
+        },
     }
 }
 
@@ -76,7 +81,7 @@ pub fn handle_open(
     path: &str,
     load_debug_info: bool,
     debug_info_path: Option<&str>,
-    debug_info_verbose: bool,
+    _debug_info_verbose: bool,
     _force: bool,
     file_type: Option<&str>,
     auto_analyse: bool,
@@ -251,43 +256,16 @@ pub fn handle_open(
                     error: Some("debug info not found".to_string()),
                 });
             } else {
-                match db.load_debug_info(&path, debug_info_verbose) {
-                    Ok(loaded) => {
-                        if loaded {
-                            info!(path = %path.display(), "Debug info loaded");
-                            debug_info = Some(DebugInfoLoad {
-                                path: path.display().to_string(),
-                                loaded,
-                                error: None,
-                            });
-                        } else {
-                            warn!(path = %path.display(), "Debug info load returned false");
-                            debug_info = Some(DebugInfoLoad {
-                                path: path.display().to_string(),
-                                loaded,
-                                error: Some("load returned false".to_string()),
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        warn!(path = %path.display(), error = %e, "Debug info load error");
-                        debug_info = Some(DebugInfoLoad {
-                            path: path.display().to_string(),
-                            loaded: false,
-                            error: Some(e.to_string()),
-                        });
-                    }
-                }
+                debug_info = Some(DebugInfoLoad {
+                    path: path.display().to_string(),
+                    loaded: false,
+                    error: Some("Debug info loading API removed in idalib 0.9.0".to_string()),
+                });
             }
         }
     } else if !is_idb && should_load_dsym {
         if let Some(path) = dsym_path.as_ref() {
-            info!(path = %path.display(), "Loading dSYM debug info");
-            match db.load_debug_info(path, false) {
-                Ok(true) => info!(path = %path.display(), "dSYM debug info loaded"),
-                Ok(false) => warn!(path = %path.display(), "dSYM debug info load failed"),
-                Err(e) => warn!(path = %path.display(), error = %e, "dSYM debug info load error"),
-            }
+            info!(path = %path.display(), "Debug info loading API removed in idalib 0.9.0");
         }
     }
 
@@ -310,34 +288,11 @@ pub fn handle_open(
 }
 
 pub fn handle_load_debug_info(
-    idb: &Option<IDB>,
-    path: Option<&str>,
-    verbose: bool,
+    _idb: &Option<IDB>,
+    _path: Option<&str>,
+    _verbose: bool,
 ) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    let resolved = if let Some(path) = path {
-        PathBuf::from(path)
-    } else {
-        let mut base = db.path().to_path_buf();
-        if let Some(ext) = base.extension().and_then(|e| e.to_str()) {
-            if ext.eq_ignore_ascii_case("i64") || ext.eq_ignore_ascii_case("idb") {
-                base.set_extension("");
-            }
-        }
-        dsym_path_for_binary(&base)
-            .ok_or_else(|| ToolError::InvalidPath("No sibling .dSYM found".to_string()))?
-    };
-
-    if !resolved.exists() {
-        return Err(ToolError::InvalidPath(format!(
-            "File not found: {}",
-            resolved.display()
-        )));
-    }
-
-    let loaded = db.load_debug_info(&resolved, verbose)?;
-    Ok(json!({
-        "path": resolved.display().to_string(),
-        "loaded": loaded,
-    }))
+    Err(ToolError::IdaError(
+        "Debug info loading API removed in idalib 0.9.0".to_string(),
+    ))
 }

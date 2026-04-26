@@ -4,7 +4,6 @@ use crate::disasm::generate_disasm_line;
 use crate::error::ToolError;
 use idalib::{Address, IDB};
 use serde_json::{json, Value};
-use std::collections::HashSet;
 
 pub fn handle_disasm_by_name(
     idb: &Option<IDB>,
@@ -178,97 +177,14 @@ pub fn handle_search_pseudocode(
 
 /// Get decompiled pseudocode statements at a specific address or address range.
 pub fn handle_pseudocode_at(
-    idb: &Option<IDB>,
-    addr: u64,
-    end_addr: Option<u64>,
+    _idb: &Option<IDB>,
+    _addr: u64,
+    _end_addr: Option<u64>,
 ) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-
-    // Check if decompiler is available
-    if !db.decompiler_available() {
-        return Err(ToolError::DecompilerUnavailable);
-    }
-
-    // Find the function at this address
-    let func = db
-        .function_at(addr)
-        .ok_or(ToolError::FunctionNotFound(addr))?;
-
-    let func_start = func.start_address();
-    let func_end = func.end_address();
-    let func_name = func
-        .name()
-        .unwrap_or_else(|| format!("sub_{:x}", func_start));
-
-    // Decompile function
-    let cfunc = db
-        .decompile(&func)
-        .map_err(|e| ToolError::IdaError(e.to_string()))?;
-
-    let eamap_ready = cfunc.has_eamap();
-
-    let mut statements = Vec::new();
-    let mut seen_eas = HashSet::new();
-
-    if let Some(end) = end_addr {
-        // Range query - collect unique statements that cover any address in [addr, end)
-        let mut cur = addr;
-        while cur < end {
-            if let Some(stmts) = cfunc.statements_at(cur) {
-                for stmt in stmts {
-                    let stmt_ea = stmt.address();
-                    if seen_eas.insert(stmt_ea) {
-                        let text = stmt.to_string();
-                        let bounds = stmt.bounds();
-                        statements.push(json!({
-                            "address": format!("{:#x}", stmt_ea),
-                            "text": text.trim(),
-                            "opcode": stmt.opcode(),
-                            "bounds": bounds.map(|b| json!({
-                                "start": format!("{:#x}", b.start),
-                                "end": format!("{:#x}", b.end),
-                            })),
-                        }));
-                    }
-                }
-            }
-            cur += 1;
-        }
-    } else {
-        // Single address query
-        if let Some(stmts) = cfunc.statements_at(addr) {
-            for stmt in stmts {
-                let stmt_ea = stmt.address();
-                if seen_eas.insert(stmt_ea) {
-                    let text = stmt.to_string();
-                    let bounds = stmt.bounds();
-                    statements.push(json!({
-                        "address": format!("{:#x}", stmt_ea),
-                        "text": text.trim(),
-                        "opcode": stmt.opcode(),
-                        "bounds": bounds.map(|b| json!({
-                            "start": format!("{:#x}", b.start),
-                            "end": format!("{:#x}", b.end),
-                        })),
-                    }));
-                }
-            }
-        }
-    }
-
-    Ok(json!({
-        "function": {
-            "address": format!("{:#x}", func_start),
-            "name": func_name,
-            "start": format!("{:#x}", func_start),
-            "end": format!("{:#x}", func_end),
-        },
-        "query_address": format!("{:#x}", addr),
-        "query_end_address": end_addr.map(|a| format!("{:#x}", a)),
-        "eamap_ready": eamap_ready,
-        "statements": statements,
-        "count": statements.len(),
-    }))
+    Err(ToolError::IdaError(
+        "Pseudocode statement API (statements_at, has_eamap) removed in idalib 0.9.0"
+            .to_string(),
+    ))
 }
 
 const DECOMPILE_STRUCTURED_PY: &str = include_str!("../../../scripts/decompile_structured.py");

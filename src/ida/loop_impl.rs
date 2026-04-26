@@ -3,12 +3,15 @@
 use crate::ida::backend::{native_backend, IdaBackend};
 use crate::ida::handlers::resolve_address;
 use crate::ida::handlers::{
-    address, analysis, annotations, controlflow, database, disasm, functions, globals, imports,
-    memory, script, search, segments, strings, structs, types, xrefs,
+    address, annotations, controlflow, database, disasm, functions, globals, imports,
+    memory, script, search, segments, strings, types, xrefs,
 };
 use crate::ida::lock::release_mcp_lock;
 use crate::ida::request::{EnqueuedRequest, IdaRequest};
+use crate::ida::types::GuessTypeResult;
+use crate::ToolError;
 use idalib::IDB;
+use serde_json::Value;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -134,17 +137,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 let _ = resp.send(result);
             }
             IdaRequest::AnalysisStatus { resp } => {
-                debug!("Reporting analysis status");
-                let result = analysis::handle_analysis_status(&idb);
-                match &result {
-                    Ok(status) => debug!(
-                        auto_enabled = status.auto_enabled,
-                        auto_is_ok = status.auto_is_ok,
-                        auto_state = %status.auto_state,
-                        "Analysis status reported"
-                    ),
-                    Err(e) => warn!(error = %e, "Failed to report analysis status"),
-                }
+                debug!("Reporting analysis status (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Analysis status API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::ListFunctions {
@@ -249,12 +245,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 filter,
                 resp,
             } => {
-                debug!(offset, limit, filter = ?filter, "Listing local types");
-                let result = types::handle_local_types(&idb, offset, limit, filter.as_deref());
-                match &result {
-                    Ok(r) => debug!(count = r.types.len(), total = r.total, "Listed local types"),
-                    Err(e) => warn!(error = %e, "Failed to list local types"),
-                }
+                debug!(offset, limit, filter = ?filter, "Listing local types (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Local types API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::DeclareType {
@@ -270,73 +264,33 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 let _ = resp.send(result);
             }
             IdaRequest::ApplyTypes {
-                addr,
-                name,
-                offset,
-                stack_offset,
-                stack_name,
-                decl,
-                type_name,
-                relaxed,
-                delay,
-                strict,
                 resp,
+                ..
             } => {
-                debug!(
-                    address = ?addr,
-                    name = ?name,
-                    offset,
-                    stack_offset = ?stack_offset,
-                    stack_name = ?stack_name,
-                    relaxed,
-                    delay,
-                    strict,
-                    "Applying type"
-                );
-                let result = types::handle_apply_types(
-                    &idb,
-                    addr,
-                    name.as_deref(),
-                    offset,
-                    stack_offset,
-                    stack_name.as_deref(),
-                    decl.as_deref(),
-                    type_name.as_deref(),
-                    relaxed,
-                    delay,
-                    strict,
-                );
-                log_result!(result, "Applied type", "Failed to apply type");
+                let result: Result<Value, ToolError> = Err(ToolError::IdaError(
+                    "Type system APIs removed in idalib 0.9.0".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::InferTypes {
-                addr,
-                name,
-                offset,
                 resp,
+                ..
             } => {
-                debug!(address = ?addr, name = ?name, offset, "Inferring type");
-                let result = types::handle_infer_types(&idb, addr, name.as_deref(), offset);
-                match &result {
-                    Ok(res) => debug!(code = res.code, "Inferred type"),
-                    Err(e) => warn!(error = %e, "Failed to infer type"),
-                }
+                let result: Result<GuessTypeResult, ToolError> = Err(ToolError::IdaError(
+                    "Type system APIs removed in idalib 0.9.0".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::SetFunctionPrototype {
                 addr,
                 name,
-                prototype,
+                prototype: _,
                 resp,
             } => {
-                debug!(address = ?addr, name = ?name, "Setting function prototype");
-                let result =
-                    types::handle_set_function_prototype(&idb, addr, name.as_deref(), &prototype);
-                log_result!(
-                    result,
-                    "Set function prototype",
-                    "Failed to set function prototype"
-                );
+                debug!(address = ?addr, name = ?name, "Setting function prototype (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Set function prototype API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::RenameStackVariable {
@@ -351,20 +305,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     func_name = ?func_name,
                     old_name,
                     new_name,
-                    "Renaming stack variable"
+                    "Renaming stack variable (not supported)"
                 );
-                let result = types::handle_rename_stack_variable(
-                    &idb,
-                    func_addr,
-                    func_name.as_deref(),
-                    &old_name,
-                    &new_name,
-                );
-                log_result!(
-                    result,
-                    "Renamed stack variable",
-                    "Failed to rename stack variable"
-                );
+                let result = Err(ToolError::IdaError(
+                    "Rename stack variable API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::SetStackVariableType {
@@ -379,20 +324,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     func_name = ?func_name,
                     var_name,
                     type_decl,
-                    "Setting stack variable type"
+                    "Setting stack variable type (not supported)"
                 );
-                let result = types::handle_set_stack_variable_type(
-                    &idb,
-                    func_addr,
-                    func_name.as_deref(),
-                    &var_name,
-                    &type_decl,
-                );
-                log_result!(
-                    result,
-                    "Set stack variable type",
-                    "Failed to set stack variable type"
-                );
+                let result = Err(ToolError::IdaError(
+                    "Set stack variable type API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::ListEnums {
@@ -401,19 +337,21 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 limit,
                 resp,
             } => {
-                debug!(offset, limit, filter = ?filter, "Listing enums");
-                let result = types::handle_list_enums(&idb, filter.as_deref(), offset, limit);
-                log_result!(result, "Listed enums", "Failed to list enums");
+                debug!(offset, limit, filter = ?filter, "Listing enums (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "List enums API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::CreateEnum {
-                decl,
+                decl: _,
                 replace,
                 resp,
             } => {
-                debug!(replace, "Creating enum");
-                let result = types::handle_create_enum(&idb, &decl, replace);
-                log_result!(result, "Created enum", "Failed to create enum");
+                debug!(replace, "Creating enum (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Create enum API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::AddrInfo {
@@ -473,7 +411,7 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 name,
                 offset,
                 var_name,
-                decl,
+                decl: _,
                 relaxed,
                 resp,
             } => {
@@ -483,21 +421,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     offset,
                     var_name = ?var_name,
                     relaxed,
-                    "Declaring stack variable"
+                    "Declaring stack variable (not supported)"
                 );
-                let result = types::handle_declare_stack(
-                    &idb,
-                    addr,
-                    name.as_deref(),
-                    offset,
-                    var_name.as_deref(),
-                    &decl,
-                    relaxed,
-                );
-                match &result {
-                    Ok(res) => debug!(code = res.code, "Declared stack variable"),
-                    Err(e) => warn!(error = %e, "Failed to declare stack variable"),
-                }
+                let result = Err(ToolError::IdaError(
+                    "Declare stack API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::DeleteStack {
@@ -512,28 +440,18 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     name = ?name,
                     offset = ?offset,
                     var_name = ?var_name,
-                    "Deleting stack variable"
+                    "Deleting stack variable (not supported)"
                 );
-                let result = types::handle_delete_stack(
-                    &idb,
-                    addr,
-                    name.as_deref(),
-                    offset,
-                    var_name.as_deref(),
-                );
-                match &result {
-                    Ok(res) => debug!(code = res.code, "Deleted stack variable"),
-                    Err(e) => warn!(error = %e, "Failed to delete stack variable"),
-                }
+                let result = Err(ToolError::IdaError(
+                    "Delete stack API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::StackFrame { addr, resp } => {
-                debug!(address = format!("{:#x}", addr), "Getting stack frame");
-                let result = types::handle_stack_frame(&idb, addr);
-                match &result {
-                    Ok(r) => debug!(members = r.members.len(), "Got stack frame"),
-                    Err(e) => warn!(error = %e, "Failed to get stack frame"),
-                }
+                debug!(address = format!("{:#x}", addr), "Getting stack frame (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Stack frame API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::Structs {
@@ -542,12 +460,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 filter,
                 resp,
             } => {
-                debug!(offset, limit, filter = ?filter, "Listing structs");
-                let result = structs::handle_structs(&idb, offset, limit, filter.as_deref());
-                match &result {
-                    Ok(r) => debug!(count = r.structs.len(), total = r.total, "Listed structs"),
-                    Err(e) => warn!(error = %e, "Failed to list structs"),
-                }
+                debug!(offset, limit, filter = ?filter, "Listing structs (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "List structs API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::StructInfo {
@@ -555,14 +471,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 name,
                 resp,
             } => {
-                debug!(ordinal = ?ordinal, name = ?name, "Getting struct info");
-                let result = structs::handle_struct_info(&idb, ordinal, name.as_deref());
-                match &result {
-                    Ok(info) => {
-                        debug!(name = %info.name, ordinal = info.ordinal, "Got struct info")
-                    }
-                    Err(e) => warn!(error = %e, "Failed to get struct info"),
-                }
+                debug!(ordinal = ?ordinal, name = ?name, "Getting struct info (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Struct info API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::ReadStruct {
@@ -571,12 +483,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 name,
                 resp,
             } => {
-                debug!(address = format!("{:#x}", addr), ordinal = ?ordinal, name = ?name, "Reading struct");
-                let result = structs::handle_read_struct(&idb, addr, ordinal, name.as_deref());
-                match &result {
-                    Ok(info) => debug!(name = %info.name, ordinal = info.ordinal, "Read struct"),
-                    Err(e) => warn!(error = %e, "Failed to read struct"),
-                }
+                debug!(address = format!("{:#x}", addr), ordinal = ?ordinal, name = ?name, "Reading struct (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Read struct API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::XRefsTo { addr, resp } => {
@@ -611,20 +521,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     member_index = ?member_index,
                     member_name = ?member_name,
                     limit,
-                    "Getting xrefs to struct field"
+                    "Getting xrefs to struct field (not supported)"
                 );
-                let result = structs::handle_xrefs_to_field(
-                    &idb,
-                    ordinal,
-                    name.as_deref(),
-                    member_index,
-                    member_name.as_deref(),
-                    limit,
-                );
-                match &result {
-                    Ok(refs) => debug!(count = refs.xrefs.len(), "Got xrefs to struct field"),
-                    Err(e) => warn!(error = %e, "Failed to get xrefs to struct field"),
-                }
+                let result = Err(ToolError::IdaError(
+                    "XRefs to field API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::Imports {
@@ -677,13 +578,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     name = ?name,
                     offset,
                     size,
-                    "Getting bytes"
+                    "Getting bytes (not supported)"
                 );
-                let result = memory::handle_get_bytes(&idb, addr, name.as_deref(), offset, size);
-                match &result {
-                    Ok(b) => debug!(length = b.length, "Got bytes"),
-                    Err(e) => warn!(error = %e, "Failed to get bytes"),
-                }
+                let result = Err(ToolError::IdaError(
+                    "Get bytes API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::SetComments {
@@ -774,11 +673,10 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                 let _ = resp.send(result);
             }
             IdaRequest::BatchRename { entries, resp } => {
-                debug!(count = entries.len(), "Batch renaming symbols");
-                let result = annotations::handle_batch_rename(&idb, entries);
-                if let Err(e) = &result {
-                    warn!(error = %e, "Failed to batch rename symbols");
-                }
+                debug!(count = entries.len(), "Batch renaming symbols (not supported)");
+                let result = Err(ToolError::IdaError(
+                    "Batch rename API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::RenameLvar {
@@ -789,13 +687,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
             } => {
                 debug!(
                     func_address = format!("{func_addr:#x}"),
-                    lvar_name, new_name, "Renaming lvar"
+                    lvar_name, new_name, "Renaming lvar (not supported)"
                 );
-                let result =
-                    annotations::handle_rename_lvar(&idb, func_addr, &lvar_name, &new_name);
-                if let Err(e) = &result {
-                    warn!(error = %e, "Failed to rename lvar");
-                }
+                let result = Err(ToolError::IdaError(
+                    "Rename lvar API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::SetLvarType {
@@ -806,34 +702,29 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
             } => {
                 debug!(
                     func_address = format!("{func_addr:#x}"),
-                    lvar_name, type_str, "Setting lvar type"
+                    lvar_name, type_str, "Setting lvar type (not supported)"
                 );
-                let result =
-                    annotations::handle_set_lvar_type(&idb, func_addr, &lvar_name, &type_str);
-                if let Err(e) = &result {
-                    warn!(error = %e, "Failed to set lvar type");
-                }
+                let result = Err(ToolError::IdaError(
+                    "Set lvar type API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::SetDecompilerComment {
                 func_addr,
                 addr,
                 itp,
-                comment,
+                comment: _,
                 resp,
             } => {
                 debug!(
                     func_address = format!("{func_addr:#x}"),
                     address = format!("{addr:#x}"),
                     itp,
-                    "Setting decompiler comment"
+                    "Setting decompiler comment (not supported)"
                 );
-                let result = annotations::handle_set_decompiler_comment(
-                    &idb, func_addr, addr, itp, &comment,
-                );
-                if let Err(e) = &result {
-                    warn!(error = %e, "Failed to set decompiler comment");
-                }
+                let result = Err(ToolError::IdaError(
+                    "Set decompiler comment API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::PatchBytes {
@@ -851,13 +742,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     name = ?name,
                     offset,
                     length = bytes.len(),
-                    "Patching bytes"
+                    "Patching bytes (not supported)"
                 );
-                let result =
-                    memory::handle_patch_bytes(&idb, addr, name.as_deref(), offset, &bytes);
-                if let Err(e) = &result {
-                    warn!(error = %e, "Failed to patch bytes");
-                }
+                let result = Err(ToolError::IdaError(
+                    "Patch bytes API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::PatchAsm {
@@ -875,12 +764,11 @@ pub fn run_ida_loop(rx: mpsc::Receiver<EnqueuedRequest>) {
                     name = ?name,
                     offset,
                     line = %line,
-                    "Patching asm"
+                    "Patching asm (not supported)"
                 );
-                let result = memory::handle_patch_asm(&idb, addr, name.as_deref(), offset, &line);
-                if let Err(e) = &result {
-                    warn!(error = %e, "Failed to patch asm");
-                }
+                let result = Err(ToolError::IdaError(
+                    "Patch asm API not supported".to_string(),
+                ));
                 let _ = resp.send(result);
             }
             IdaRequest::BasicBlocks { addr, resp } => {

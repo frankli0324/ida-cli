@@ -1,7 +1,7 @@
 //! Function-related handlers.
 
 use crate::error::ToolError;
-use crate::ida::handlers::{parse_address_str, resolve_address};
+use crate::ida::handlers::parse_address_str;
 use crate::ida::types::{FunctionInfo, FunctionListResult, FunctionRangeInfo};
 use idalib::IDB;
 use serde_json::{json, Value};
@@ -128,25 +128,14 @@ pub fn handle_lookup_funcs(idb: &Option<IDB>, queries: &[String]) -> Result<Valu
 }
 
 pub fn handle_get_function_prototype(
-    idb: &Option<IDB>,
-    addr: Option<u64>,
-    name: Option<&str>,
+    _idb: &Option<IDB>,
+    _addr: Option<u64>,
+    _name: Option<&str>,
 ) -> Result<Value, ToolError> {
-    let db = idb.as_ref().ok_or(ToolError::NoDatabaseOpen)?;
-    let addr = resolve_address(idb, addr, name, 0)?;
-    let gt = db.guess_type(addr);
-    if gt.code == 0 {
-        Err(ToolError::IdaError(format!(
-            "No type information at {:#x}",
-            addr
-        )))
-    } else {
-        Ok(json!({
-            "address": format!("{:#x}", addr),
-            "prototype": gt.decl,
-            "kind": gt.kind,
-        }))
-    }
+    Err(ToolError::IdaError(
+        "Function prototype retrieval requires guess_type API which was removed in idalib 0.9.0"
+            .to_string(),
+    ))
 }
 
 pub fn handle_analyze_funcs(idb: &mut Option<IDB>) -> Result<Value, ToolError> {

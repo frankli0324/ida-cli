@@ -1,7 +1,6 @@
 //! Analysis handlers - load_debug_info API removed in idalib 0.9.0
 
 use crate::error::ToolError;
-use crate::ida::types::AnalysisStatus;
 use idalib::IDB;
 use serde_json::Value;
 
@@ -15,23 +14,13 @@ pub fn handle_load_debug_info(
     Err(ToolError::IdaError(NOT_SUPPORTED.to_string()))
 }
 
-pub fn handle_analysis_status(_idb: &Option<IDB>) -> Result<AnalysisStatus, ToolError> {
+pub fn handle_analysis_status(_idb: &Option<IDB>) -> Result<Value, ToolError> {
     // Return a default status since auto_is_ok and auto_state are not available
-    Ok(AnalysisStatus {
-        auto_enabled: false,
-        auto_is_ok: false,
-        auto_state: "unknown".to_string(),
-        auto_state_id: -1,
-        analysis_running: false,
-    })
-}
-
-pub fn build_analysis_status(_idb: &IDB) -> AnalysisStatus {
-    AnalysisStatus {
-        auto_enabled: false,
-        auto_is_ok: false,
-        auto_state: "unknown".to_string(),
-        auto_state_id: -1,
-        analysis_running: false,
-    }
+    Ok(serde_json::json!({
+        "auto_enabled": false,
+        "auto_is_ok": false,
+        "auto_state": "unknown",
+        "auto_state_id": -1,
+        "analysis_running": false,
+    }))
 }
