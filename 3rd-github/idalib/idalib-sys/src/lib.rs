@@ -54,6 +54,8 @@ impl IDAError {
 }
 
 include_cpp! {
+    // NOTE: this fixes compilation issues on Windows when cross-compiling
+    #include "fixups.h"
     // NOTE: this fixes autocxx's inability to detect ea_t, optype_t as POD...
     #include "types.h"
 
@@ -334,7 +336,6 @@ include_cpp! {
     generate!("XREF_ALL")
     generate!("XREF_FAR")
     generate!("XREF_DATA")
-    generate!("XREF_TID")
 
     generate!("cref_t")
     generate!("dref_t")
@@ -357,7 +358,7 @@ include_cpp! {
     generate!("get_strlist_qty")
 
     // loader
-    generate!("plugin_t")
+    extern_cpp_type!("plugin_t", crate::plugin::plugin_t)
     generate!("find_plugin")
     generate!("run_plugin")
 
@@ -378,7 +379,6 @@ include_cpp! {
     generate!("retrieve_input_file_size")
 
     // name(s)
-    generate!("set_name")
     generate!("get_nlist_idx")
     generate!("get_nlist_size")
     generate!("get_nlist_ea")
@@ -531,15 +531,9 @@ pub mod hexrays {
         carg_t, carglist_t, cfuncptr_t, init_hexrays_plugin, term_hexrays_plugin,
     };
     pub use super::ffix::{
-        addr_range, cblock_iter, eamap_result, idalib_hexrays_cblock_iter,
-        idalib_hexrays_cblock_iter_next, idalib_hexrays_cblock_len,
-        idalib_hexrays_cfunc_find_stmts_at, idalib_hexrays_cfunc_get_stmt_bounds,
-        idalib_hexrays_cfunc_has_eamap, idalib_hexrays_cfunc_pseudocode,
-        idalib_hexrays_cfuncptr_inner, idalib_hexrays_cinsn_ea, idalib_hexrays_cinsn_op,
-        idalib_hexrays_cinsn_print, idalib_hexrays_decompile_func, idalib_hexrays_eamap_result_len,
-        idalib_hexrays_eamap_result_next, idalib_hexrays_eamap_result_reset,
-        idalib_hexrays_rename_lvar, idalib_hexrays_set_decompiler_comment,
-        idalib_hexrays_set_lvar_type,
+        cblock_iter, idalib_hexrays_cblock_iter, idalib_hexrays_cblock_iter_next,
+        idalib_hexrays_cblock_len, idalib_hexrays_cfunc_pseudocode, idalib_hexrays_cfuncptr_inner,
+        idalib_hexrays_decompile_func,
     };
 
     unsafe impl cxx::ExternType for cfunc_t {
@@ -619,8 +613,6 @@ pub mod idp {
     #![allow(unused)]
 
     include!(concat!(env!("OUT_DIR"), "/idp.rs"));
-
-    pub use super::ffix::idalib_assemble_line;
 }
 
 pub mod inf {
@@ -700,11 +692,65 @@ pub mod inf {
     };
 }
 
-pub mod auto_analysis {
+pub mod plugin {
+    #![allow(non_camel_case_types)]
+    #![allow(non_upper_case_globals)]
     #![allow(unused)]
 
-    pub use super::ffix::{idalib_auto_is_ok, idalib_get_auto_state};
+    pub use super::ffi::{find_plugin, run_plugin};
+    pub use super::ffix::{idalib_create_plugmod, idalib_plugin_flags, idalib_plugin_version};
+
+    include!(concat!(env!("OUT_DIR"), "/plugin.rs"));
+
+    unsafe impl cxx::ExternType for plugin_t {
+        type Id = cxx::type_id!("plugin_t");
+        type Kind = cxx::kind::Trivial;
+    }
+
+    unsafe impl cxx::ExternType for plugmod_t {
+        type Id = cxx::type_id!("plugmod_t");
+        type Kind = cxx::kind::Opaque;
+    }
+
+    pub mod flags {
+        pub use crate::ffi::{
+            PLUGIN_DBG, PLUGIN_DRAW, PLUGIN_FIX, PLUGIN_HIDE, PLUGIN_MOD, PLUGIN_MULTI,
+            PLUGIN_PROC, PLUGIN_SCRIPTED, PLUGIN_SEG, PLUGIN_UNL,
+        };
+    }
+
+    pub trait PlugModBridge: Send + Sync + 'static {
+        fn run(&mut self, arg: usize) -> bool;
+        fn term(&mut self);
+    }
+
+    pub struct PlugMod {
+        inner: Box<dyn PlugModBridge>,
+    }
+
+    impl PlugMod {
+        pub fn new<T: PlugModBridge>(inner: T) -> Self {
+            Self {
+                inner: Box::new(inner),
+            }
+        }
+
+        pub fn run(&mut self, arg: usize) -> bool {
+            self.inner.run(arg)
+        }
+
+        pub fn term(&mut self) {
+            self.inner.term();
+        }
+    }
 }
+
+// NOTE: this is required, since we can't do:
+//
+// ```
+// type PlugMod = crate::plugin::PlugMod;
+// ```
+pub(crate) use plugin::PlugMod;
 
 pub mod pod {
     #![allow(non_camel_case_types)]
@@ -733,94 +779,11 @@ mod ffix {
         desc: String,
     }
 
-    /// Address range for statement boundaries
-    #[derive(Debug, Clone, Copy, Default)]
-    struct addr_range {
-        start: u64,
-        end: u64,
-    }
+    extern "Rust" {
+        type PlugMod;
 
-    #[derive(Debug, Clone, Default)]
-    struct udt_info {
-        name: String,
-        size: u64,
-        is_union: bool,
-        member_count: u32,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct udt_member_info {
-        name: String,
-        type_name: String,
-        offset_bits: u64,
-        size_bits: u64,
-        is_bitfield: bool,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct local_type_info {
-        name: String,
-        decl: String,
-        kind: String,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct type_decl_result {
-        code: i32,
-        name: String,
-        decl: String,
-        kind: String,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct type_guess_result {
-        code: i32,
-        decl: String,
-        kind: String,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct frame_info {
-        frame_size: u64,
-        ret_size: i32,
-        frsize: u64,
-        frregs: u16,
-        argsize: u64,
-        fpd: u64,
-        args_start: u64,
-        args_end: u64,
-        retaddr_start: u64,
-        retaddr_end: u64,
-        savregs_start: u64,
-        savregs_end: u64,
-        locals_start: u64,
-        locals_end: u64,
-        member_count: u32,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct frame_member_info {
-        name: String,
-        type_name: String,
-        offset_bits: u64,
-        size_bits: u64,
-        is_bitfield: bool,
-        part: String,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct stkvar_result {
-        code: i32,
-        name: String,
-        offset: i64,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct script_result {
-        success: bool,
-        stdout_text: String,
-        stderr_text: String,
-        error: String,
+        fn run(self: &mut PlugMod, arg: usize) -> bool;
+        fn term(self: &mut PlugMod);
     }
 
     unsafe extern "C++" {
@@ -828,7 +791,6 @@ mod ffix {
         include!("idalib.hpp");
 
         include!("types.h");
-        include!("auto_extras.h");
         include!("bookmarks_extras.h");
         include!("bytes_extras.h");
         include!("comments_extras.h");
@@ -844,11 +806,7 @@ mod ffix {
         include!("segm_extras.h");
         include!("search_extras.h");
         include!("strings_extras.h");
-        include!("lines_extras.h");
-        include!("udt_extras.h");
-        include!("types_extras.h");
-        include!("frame_extras.h");
-        include!("expr_extras.h");
+        include!("plugin_extras.h");
 
         type c_short = autocxx::c_short;
         type c_int = autocxx::c_int;
@@ -876,9 +834,11 @@ mod ffix {
         type cinsn_t = super::hexrays::cinsn_t;
 
         type cblock_iter;
-        type eamap_result;
 
-        type plugin_t = super::ffi::plugin_t;
+        type plugin_t = super::plugin::plugin_t;
+        type plugmod_t = super::plugin::plugmod_t;
+
+        unsafe fn idalib_create_plugmod(pm: Box<PlugMod>) -> *mut plugmod_t;
 
         unsafe fn init_library(argc: c_int, argv: *mut *mut c_char) -> c_int;
 
@@ -889,41 +849,6 @@ mod ffix {
         ) -> c_int;
         unsafe fn idalib_check_license() -> bool;
         unsafe fn idalib_get_license_id(id: &mut [u8; 6]) -> bool;
-        unsafe fn idalib_load_dbg_dbginfo(path: *const c_char, verbose: bool) -> bool;
-
-        unsafe fn idalib_get_local_type(ordinal: c_uint, out: &mut local_type_info) -> bool;
-        unsafe fn idalib_get_frame_info(ea: u64, out: &mut frame_info) -> bool;
-        unsafe fn idalib_get_frame_member(
-            ea: u64,
-            index: c_uint,
-            out: &mut frame_member_info,
-        ) -> bool;
-        unsafe fn idalib_define_stkvar(
-            ea: u64,
-            name: *const c_char,
-            offset: i64,
-            decl: *const c_char,
-            relaxed: bool,
-            out: &mut stkvar_result,
-        ) -> bool;
-        unsafe fn idalib_delete_stkvar(
-            ea: u64,
-            name: *const c_char,
-            offset: i64,
-            use_offset: bool,
-            out: &mut stkvar_result,
-        ) -> bool;
-        #[allow(clippy::too_many_arguments)]
-        unsafe fn idalib_set_stkvar_type(
-            ea: u64,
-            name: *const c_char,
-            offset: i64,
-            use_offset: bool,
-            decl: *const c_char,
-            relaxed: bool,
-            strict: bool,
-            out: &mut stkvar_result,
-        ) -> bool;
 
         // NOTE: we can't use uval_t here due to it resolving to c_ulonglong,
         // which causes `verify_extern_type` to fail...
@@ -953,50 +878,6 @@ mod ffix {
         unsafe fn idalib_hexrays_cblock_iter(b: *mut cblock_t) -> UniquePtr<cblock_iter>;
         unsafe fn idalib_hexrays_cblock_iter_next(slf: Pin<&mut cblock_iter>) -> *mut cinsn_t;
         unsafe fn idalib_hexrays_cblock_len(b: *mut cblock_t) -> usize;
-
-        unsafe fn idalib_hexrays_rename_lvar(
-            func_ea: c_ulonglong,
-            old_name: *const c_char,
-            new_name: *const c_char,
-        ) -> bool;
-
-        unsafe fn idalib_hexrays_set_lvar_type(
-            func_ea: c_ulonglong,
-            lvar_name: *const c_char,
-            type_str: *const c_char,
-        ) -> bool;
-
-        unsafe fn idalib_hexrays_set_decompiler_comment(
-            func_ea: c_ulonglong,
-            addr: c_ulonglong,
-            itp: c_int,
-            comment: *const c_char,
-        ) -> bool;
-
-        // Eamap support - address to statements mapping
-        unsafe fn idalib_hexrays_cfunc_has_eamap(f: *mut cfunc_t) -> bool;
-        unsafe fn idalib_hexrays_cfunc_find_stmts_at(
-            f: *mut cfunc_t,
-            addr: u64,
-        ) -> UniquePtr<eamap_result>;
-        unsafe fn idalib_hexrays_eamap_result_len(r: &eamap_result) -> usize;
-        unsafe fn idalib_hexrays_eamap_result_next(r: Pin<&mut eamap_result>) -> *mut cinsn_t;
-        unsafe fn idalib_hexrays_eamap_result_reset(r: Pin<&mut eamap_result>);
-
-        // Statement info
-        unsafe fn idalib_hexrays_cinsn_ea(insn: *const cinsn_t) -> u64;
-        unsafe fn idalib_hexrays_cinsn_op(insn: *const cinsn_t) -> c_int;
-        unsafe fn idalib_hexrays_cinsn_print(insn: *const cinsn_t, func: *const cfunc_t) -> String;
-
-        // Boundaries support - statement to address range mapping
-        unsafe fn idalib_hexrays_cfunc_get_stmt_bounds(
-            f: *mut cfunc_t,
-            insn: *const cinsn_t,
-            out: *mut addr_range,
-        ) -> bool;
-
-        unsafe fn idalib_auto_is_ok() -> bool;
-        unsafe fn idalib_get_auto_state() -> c_int;
 
         unsafe fn idalib_inf_get_version() -> u16;
         unsafe fn idalib_inf_get_genflags() -> u16;
@@ -1216,17 +1097,13 @@ mod ffix {
 
         unsafe fn idalib_ea2str(ea: c_ulonglong) -> String;
 
+        unsafe fn idalib_msg(msg: *const c_char);
+
         unsafe fn idalib_get_byte(ea: c_ulonglong) -> u8;
         unsafe fn idalib_get_word(ea: c_ulonglong) -> u16;
         unsafe fn idalib_get_dword(ea: c_ulonglong) -> u32;
         unsafe fn idalib_get_qword(ea: c_ulonglong) -> u64;
         unsafe fn idalib_get_bytes(ea: c_ulonglong, buf: &mut Vec<u8>) -> Result<usize>;
-        unsafe fn idalib_patch_bytes(ea: c_ulonglong, buf: &mut Vec<u8>) -> bool;
-        unsafe fn idalib_assemble_line(
-            ea: c_ulonglong,
-            line: *const c_char,
-            buf: &mut Vec<u8>,
-        ) -> Result<c_longlong>;
 
         unsafe fn idalib_get_input_file_path() -> String;
 
@@ -1238,44 +1115,6 @@ mod ffix {
             minor: *mut c_int,
             build: *mut c_int,
         ) -> bool;
-
-        // lines
-        unsafe fn idalib_generate_disasm_line(ea: c_ulonglong) -> String;
-
-        // udt/structs
-        unsafe fn idalib_get_ordinal_limit() -> c_uint;
-        unsafe fn idalib_get_udt_info(ordinal: c_uint, out: &mut udt_info) -> bool;
-        unsafe fn idalib_get_udt_member(
-            ordinal: c_uint,
-            index: c_uint,
-            out: &mut udt_member_info,
-        ) -> bool;
-        unsafe fn idalib_get_udt_member_tid(
-            ordinal: c_uint,
-            index: c_uint,
-            out_tid: &mut u64,
-        ) -> bool;
-
-        // types
-        unsafe fn idalib_declare_type(
-            decl: *const c_char,
-            relaxed: bool,
-            replace: bool,
-            out: &mut type_decl_result,
-        ) -> bool;
-        unsafe fn idalib_declare_types(decls: *const c_char, relaxed: bool) -> c_int;
-        unsafe fn idalib_apply_decl_type(
-            ea: u64,
-            decl: *const c_char,
-            relaxed: bool,
-            delay: bool,
-            strict: bool,
-        ) -> bool;
-        unsafe fn idalib_apply_named_type(ea: u64, name: *const c_char) -> bool;
-        unsafe fn idalib_guess_tinfo(id: u64, out: &mut type_guess_result) -> bool;
-
-        // scripting
-        unsafe fn idalib_run_python_snippet(code: &str, out: &mut script_result) -> bool;
     }
 }
 
@@ -1405,7 +1244,6 @@ pub mod bytes {
     pub use super::ffi::{flags64_t, get_flags, is_code, is_data};
     pub use super::ffix::{
         idalib_get_byte, idalib_get_bytes, idalib_get_dword, idalib_get_qword, idalib_get_word,
-        idalib_patch_bytes,
     };
 }
 
@@ -1418,9 +1256,9 @@ pub mod util {
 
 pub mod xref {
     pub use super::ffi::{
-        XREF_ALL, XREF_BASE, XREF_DATA, XREF_FAR, XREF_MASK, XREF_PASTEND, XREF_TAIL, XREF_TID,
-        XREF_USER, cref_t, dref_t, has_external_refs, xrefblk_t, xrefblk_t_first_from,
-        xrefblk_t_first_to, xrefblk_t_next_from, xrefblk_t_next_to,
+        XREF_ALL, XREF_BASE, XREF_DATA, XREF_FAR, XREF_MASK, XREF_PASTEND, XREF_TAIL, XREF_USER,
+        cref_t, dref_t, has_external_refs, xrefblk_t, xrefblk_t_first_from, xrefblk_t_first_to,
+        xrefblk_t_next_from, xrefblk_t_next_to,
     };
 }
 
@@ -1431,10 +1269,6 @@ pub mod comments {
 
 pub mod conversions {
     pub use super::ffix::idalib_ea2str;
-}
-
-pub mod lines {
-    pub use super::ffix::idalib_generate_disasm_line;
 }
 
 pub mod bookmarks {
@@ -1453,18 +1287,6 @@ pub mod strings {
     pub use super::ffix::{idalib_get_strlist_item_addr, idalib_get_strlist_item_length};
 }
 
-pub mod loader {
-    pub use super::ffi::{find_plugin, plugin_t, run_plugin};
-    pub use super::ffix::{idalib_plugin_flags, idalib_plugin_version};
-
-    pub mod flags {
-        pub use super::super::ffi::{
-            PLUGIN_DBG, PLUGIN_DRAW, PLUGIN_FIX, PLUGIN_HIDE, PLUGIN_MOD, PLUGIN_MULTI,
-            PLUGIN_PROC, PLUGIN_SCRIPTED, PLUGIN_SEG, PLUGIN_UNL,
-        };
-    }
-}
-
 pub mod nalt {
     pub use super::ffi::{
         retrieve_input_file_md5, retrieve_input_file_sha256, retrieve_input_file_size,
@@ -1475,34 +1297,8 @@ pub mod nalt {
 pub mod name {
     pub use super::ffi::{
         get_nlist_ea, get_nlist_idx, get_nlist_name, get_nlist_size, is_in_nlist, is_public_name,
-        is_weak_name, set_name,
+        is_weak_name,
     };
-}
-
-pub mod udt {
-    pub use super::ffix::{
-        idalib_get_ordinal_limit, idalib_get_udt_info, idalib_get_udt_member,
-        idalib_get_udt_member_tid, udt_info, udt_member_info,
-    };
-}
-
-pub mod types {
-    pub use super::ffix::{
-        idalib_apply_decl_type, idalib_apply_named_type, idalib_declare_type, idalib_declare_types,
-        idalib_get_local_type, idalib_guess_tinfo, local_type_info, type_decl_result,
-        type_guess_result,
-    };
-}
-
-pub mod frame {
-    pub use super::ffix::{
-        frame_info, frame_member_info, idalib_define_stkvar, idalib_delete_stkvar,
-        idalib_get_frame_info, idalib_get_frame_member, idalib_set_stkvar_type, stkvar_result,
-    };
-}
-
-pub mod script {
-    pub use super::ffix::{idalib_run_python_snippet, script_result};
 }
 
 pub mod ida {
@@ -1517,6 +1313,13 @@ pub mod ida {
     use super::{IDAError, ea_t, ffi, ffix};
 
     pub use ffi::auto_wait;
+    pub use ffix::idalib_msg;
+
+    pub unsafe fn msg(msg: impl AsRef<str>) -> Result<(), IDAError> {
+        let msg = CString::new(msg.as_ref()).map_err(IDAError::ffi)?;
+        unsafe { ffix::idalib_msg(msg.as_ptr()) };
+        Ok(())
+    }
 
     pub fn is_license_valid() -> bool {
         assert!(
@@ -1588,16 +1391,6 @@ pub mod ida {
         );
 
         unsafe { ffi::set_screen_ea(ea) }
-    }
-
-    pub fn load_dbg_dbginfo(path: impl AsRef<Path>, verbose: bool) -> Result<bool, IDAError> {
-        assert!(
-            is_main_thread(),
-            "IDA cannot function correctly when not running on the main thread"
-        );
-
-        let path = CString::new(path.as_ref().to_string_lossy().as_ref()).map_err(IDAError::ffi)?;
-        Ok(unsafe { ffix::idalib_load_dbg_dbginfo(path.as_ptr(), verbose) })
     }
 
     pub fn open_database(path: impl AsRef<Path>) -> Result<(), IDAError> {

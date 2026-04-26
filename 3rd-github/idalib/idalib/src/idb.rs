@@ -1,6 +1,7 @@
 use std::ffi::CString;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
+#[cfg(not(feature = "plugin"))]
 use std::path::{Path, PathBuf};
 
 use crate::ffi::BADADDR;
@@ -11,15 +12,14 @@ use crate::ffi::entry::{get_entry, get_entry_ordinal, get_entry_qty};
 use crate::ffi::func::{
     get_func, get_func_qty, getn_func, idalib_get_func_cmt, idalib_set_func_cmt,
 };
-use crate::ffi::hexrays::{decompile_func, init_hexrays_plugin, term_hexrays_plugin};
-use crate::ffi::ida::{
-    auto_wait, close_database_with, make_signatures, open_database_quiet, set_screen_ea,
-};
-use crate::ffi::idp::idalib_assemble_line;
+#[cfg(not(feature = "plugin"))]
+use crate::ffi::hexrays::term_hexrays_plugin;
+use crate::ffi::hexrays::{decompile_func, init_hexrays_plugin};
+#[cfg(not(feature = "plugin"))]
+use crate::ffi::ida::{auto_wait, close_database_with, open_database_quiet};
+use crate::ffi::ida::{make_signatures, set_screen_ea};
 use crate::ffi::insn::decode;
-use crate::ffi::lines::idalib_generate_disasm_line;
-use crate::ffi::loader::find_plugin;
-use crate::ffi::name::set_name;
+use crate::ffi::plugin::find_plugin;
 use crate::ffi::processor::get_ph;
 use crate::ffi::search::{idalib_find_defined, idalib_find_imm, idalib_find_text};
 use crate::ffi::segment::{get_segm_by_name, get_segm_qty, getnseg, getseg};
@@ -36,14 +36,13 @@ use crate::plugin::Plugin;
 use crate::processor::Processor;
 use crate::segment::{Segment, SegmentId};
 use crate::strings::StringList;
-use crate::udt::{self, UdtInfo, UdtMember};
 use crate::xref::{XRef, XRefQuery};
 use crate::{Address, AddressFlags, IDAError, IDARuntimeHandle, prepare_library};
 
-const ASSEMBLE_LINE_BUF_CAP: usize = 1024; // IDA SDK MAXSTR (pro.h)
-
 pub struct IDB {
+    #[cfg(not(feature = "plugin"))]
     path: PathBuf,
+    #[cfg(not(feature = "plugin"))]
     save: bool,
     decompiler: bool,
     _guard: IDARuntimeHandle,
@@ -51,27 +50,28 @@ pub struct IDB {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(feature = "plugin"))]
 pub struct IDBOpenOptions {
     idb: Option<PathBuf>,
     ftype: Option<String>,
-    extra_args: Vec<String>,
 
     save: bool,
     auto_analyse: bool,
 }
 
+#[cfg(not(feature = "plugin"))]
 impl Default for IDBOpenOptions {
     fn default() -> Self {
         Self {
             idb: None,
             ftype: None,
-            extra_args: Vec::new(),
             save: false,
             auto_analyse: true,
         }
     }
 }
 
+#[cfg(not(feature = "plugin"))]
 impl IDBOpenOptions {
     pub fn new() -> Self {
         Self::default()
@@ -97,15 +97,6 @@ impl IDBOpenOptions {
         self
     }
 
-    /// Add an extra CLI argument passed to `init_database`.
-    ///
-    /// Use this for flags not covered by the typed builder methods,
-    /// e.g. `-S"/path/to/script.py"` for an IDAPython startup script.
-    pub fn arg(&mut self, arg: impl Into<String>) -> &mut Self {
-        self.extra_args.push(arg.into());
-        self
-    }
-
     pub fn open(&self, path: impl AsRef<Path>) -> Result<IDB, IDAError> {
         let mut args = Vec::new();
 
@@ -118,17 +109,17 @@ impl IDBOpenOptions {
             args.push(format!("-o{}", idb_path.display()));
         }
 
-        args.extend(self.extra_args.iter().cloned());
-
         IDB::open_full_with(path, self.auto_analyse, self.save, &args)
     }
 }
 
 impl IDB {
+    #[cfg(not(feature = "plugin"))]
     pub fn open(path: impl AsRef<Path>) -> Result<Self, IDAError> {
         Self::open_with(path, true, false)
     }
 
+    #[cfg(not(feature = "plugin"))]
     pub fn open_with(
         path: impl AsRef<Path>,
         auto_analyse: bool,
@@ -137,6 +128,7 @@ impl IDB {
         Self::open_full_with(path, auto_analyse, save, &[] as &[&str])
     }
 
+    #[cfg(not(feature = "plugin"))]
     fn open_full_with(
         path: impl AsRef<Path>,
         auto_analyse: bool,
@@ -163,14 +155,28 @@ impl IDB {
         })
     }
 
+    #[cfg(feature = "plugin")]
+    pub fn current() -> Result<Self, IDAError> {
+        let _guard = prepare_library();
+
+        Ok(Self {
+            decompiler: unsafe { init_hexrays_plugin(0.into()) },
+            _guard,
+            _marker: PhantomData,
+        })
+    }
+
+    #[cfg(not(feature = "plugin"))]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    #[cfg(not(feature = "plugin"))]
     pub fn save_on_close(&mut self, status: bool) {
         self.save = status;
     }
 
+    #[cfg(not(feature = "plugin"))]
     pub fn auto_wait(&mut self) -> bool {
         unsafe { auto_wait() }
     }
@@ -476,105 +482,6 @@ impl IDB {
             )))
         }
     }
-    pub fn rename_lvar(
-        &self,
-        func_ea: Address,
-        old_name: impl AsRef<str>,
-        new_name: impl AsRef<str>,
-    ) -> Result<(), IDAError> {
-        if !self.decompiler {
-            return Err(IDAError::ffi_with("no decompiler available"));
-        }
-        crate::decompiler::rename_lvar(func_ea, old_name, new_name).ok_or_else(|| {
-            IDAError::ffi_with(format!("failed to rename local variable at {func_ea:#x}"))
-        })
-    }
-
-    pub fn set_lvar_type(
-        &self,
-        func_ea: Address,
-        lvar_name: impl AsRef<str>,
-        type_str: impl AsRef<str>,
-    ) -> Result<(), IDAError> {
-        if !self.decompiler {
-            return Err(IDAError::ffi_with("no decompiler available"));
-        }
-        crate::decompiler::set_lvar_type(func_ea, lvar_name, type_str).ok_or_else(|| {
-            IDAError::ffi_with(format!("failed to set lvar type at {func_ea:#x}"))
-        })
-    }
-
-    pub fn set_decompiler_comment(
-        &self,
-        func_ea: Address,
-        addr: Address,
-        itp: i32,
-        comment: impl AsRef<str>,
-    ) -> Result<(), IDAError> {
-        if !self.decompiler {
-            return Err(IDAError::ffi_with("no decompiler available"));
-        }
-        crate::decompiler::set_decompiler_comment(func_ea, addr, itp, comment).ok_or_else(|| {
-            IDAError::ffi_with(format!("failed to set decompiler comment at {addr:#x}"))
-        })
-    }
-
-
-    pub fn set_name(&self, ea: Address, name: impl AsRef<str>) -> Result<(), IDAError> {
-        self.set_name_with_flags(ea, name, 0)
-    }
-
-    pub fn set_name_with_flags(
-        &self,
-        ea: Address,
-        name: impl AsRef<str>,
-        flags: i32,
-    ) -> Result<(), IDAError> {
-        let s = CString::new(name.as_ref()).map_err(IDAError::ffi)?;
-        if unsafe { set_name(ea.into(), s.as_ptr(), autocxx::c_int(flags)) } {
-            Ok(())
-        } else {
-            Err(IDAError::ffi_with(format!("failed to set name at {ea:#x}")))
-        }
-    }
-
-    pub fn patch_bytes(&self, ea: Address, bytes: &[u8]) -> Result<(), IDAError> {
-        let mut buf = bytes.to_vec();
-        if unsafe { idalib_patch_bytes(ea.into(), &mut buf) } {
-            Ok(())
-        } else {
-            Err(IDAError::ffi_with(format!(
-                "failed to patch bytes at {ea:#x}"
-            )))
-        }
-    }
-
-    pub fn assemble_line(&self, ea: Address, line: impl AsRef<str>) -> Result<Vec<u8>, IDAError> {
-        let s = CString::new(line.as_ref()).map_err(IDAError::ffi)?;
-        let mut buf = Vec::with_capacity(ASSEMBLE_LINE_BUF_CAP);
-        let len = unsafe { idalib_assemble_line(ea.into(), s.as_ptr(), &mut buf) }
-            .map_err(IDAError::ffi)?;
-        let len: i64 = len.into();
-        if len <= 0 {
-            return Err(IDAError::ffi_with(format!(
-                "failed to assemble line at {ea:#x}"
-            )));
-        }
-        let len = len as usize;
-        if len > buf.capacity() {
-            return Err(IDAError::ffi_with(format!(
-                "assembled length exceeds buffer at {ea:#x}"
-            )));
-        }
-        unsafe {
-            buf.set_len(len);
-        }
-        Ok(buf)
-    }
-
-    pub fn load_debug_info(&self, path: impl AsRef<Path>, verbose: bool) -> Result<bool, IDAError> {
-        crate::ffi::ida::load_dbg_dbginfo(path, verbose)
-    }
 
     pub fn bookmarks(&self) -> Bookmarks<'_> {
         Bookmarks::new(self)
@@ -636,111 +543,8 @@ impl IDB {
         NameList::new(self)
     }
 
-    pub fn udt_ordinal_limit(&self) -> u32 {
-        udt::ordinal_limit()
-    }
-
-    pub fn udt_info(&self, ordinal: u32) -> Option<UdtInfo> {
-        udt::get_udt_info(ordinal)
-    }
-
-    pub fn udt_member(&self, ordinal: u32, index: u32) -> Option<UdtMember> {
-        udt::get_udt_member(ordinal, index)
-    }
-
-    pub fn udt_member_tid(&self, ordinal: u32, index: u32) -> Option<u64> {
-        udt::get_udt_member_tid(ordinal, index)
-    }
-
-    pub fn local_type_info(&self, ordinal: u32) -> Option<crate::types::LocalTypeInfo> {
-        crate::types::get_local_type(ordinal)
-    }
-
-    pub fn declare_type(
-        &self,
-        decl: &str,
-        relaxed: bool,
-        replace: bool,
-    ) -> crate::types::DeclaredType {
-        crate::types::declare_type(decl, relaxed, replace)
-    }
-
-    pub fn declare_types(&self, decls: &str, relaxed: bool) -> i32 {
-        crate::types::declare_types(decls, relaxed)
-    }
-
-    pub fn apply_decl_type(
-        &self,
-        addr: u64,
-        decl: &str,
-        relaxed: bool,
-        delay: bool,
-        strict: bool,
-    ) -> bool {
-        crate::types::apply_decl_type(addr, decl, relaxed, delay, strict)
-    }
-
-    pub fn apply_named_type(&self, addr: u64, name: &str) -> bool {
-        crate::types::apply_named_type(addr, name)
-    }
-
-    pub fn guess_type(&self, id: u64) -> crate::types::GuessType {
-        crate::types::guess_type(id)
-    }
-
-    pub fn frame_info(&self, ea: Address) -> Option<crate::frame::FrameInfo> {
-        crate::frame::get_frame_info(ea)
-    }
-
-    pub fn frame_member(&self, ea: Address, index: u32) -> Option<crate::frame::FrameMember> {
-        crate::frame::get_frame_member(ea, index)
-    }
-
-    pub fn define_stack_var(
-        &self,
-        ea: Address,
-        name: Option<&str>,
-        offset: i64,
-        decl: &str,
-        relaxed: bool,
-    ) -> crate::frame::StackVarResult {
-        crate::frame::define_stack_var(ea, name, offset, decl, relaxed)
-    }
-
-    pub fn delete_stack_var(
-        &self,
-        ea: Address,
-        name: Option<&str>,
-        offset: i64,
-        use_offset: bool,
-    ) -> crate::frame::StackVarResult {
-        crate::frame::delete_stack_var(ea, name, offset, use_offset)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn set_stack_var_type(
-        &self,
-        ea: Address,
-        name: Option<&str>,
-        offset: i64,
-        use_offset: bool,
-        decl: &str,
-        relaxed: bool,
-        strict: bool,
-    ) -> crate::frame::StackVarResult {
-        crate::frame::set_stack_var_type(ea, name, offset, use_offset, decl, relaxed, strict)
-    }
-
     pub fn address_to_string(&self, ea: Address) -> Option<String> {
         let s = unsafe { idalib_ea2str(ea.into()) };
-
-        if s.is_empty() { None } else { Some(s) }
-    }
-
-    /// Generate a disassembly line at the given address.
-    /// Returns the formatted disassembly text with color codes stripped.
-    pub fn disasm_line(&self, ea: Address) -> Option<String> {
-        let s = unsafe { idalib_generate_disasm_line(ea.into()) };
 
         if s.is_empty() { None } else { Some(s) }
     }
@@ -793,19 +597,16 @@ impl IDB {
                 name.as_ref()
             )))
         } else {
-            Ok(Plugin::from_ptr(ptr))
+            Ok(Plugin::from_ptr(ptr as *const _))
         }
     }
 
     pub fn load_plugin(&self, name: impl AsRef<str>) -> Result<Plugin<'_>, IDAError> {
         self.find_plugin(name, true)
     }
-
-    pub fn run_python(&self, code: &str) -> Result<crate::script::ScriptOutput, IDAError> {
-        crate::script::run_python(code)
-    }
 }
 
+#[cfg(not(feature = "plugin"))]
 impl Drop for IDB {
     fn drop(&mut self) {
         if self.decompiler {
@@ -840,7 +641,6 @@ impl<'a> Iterator for EntryPointIter<'a> {
             return self.next();
         }
 
-        self.index += 1;
         Some(addr.into())
     }
 
